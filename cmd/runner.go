@@ -7,7 +7,7 @@ import (
 	"fmt"
 
 	"github.com/spf13/cobra"
-	"github.com/y0anfa/rhino/runner"
+	"github.com/y0anfa/rhino/internal/runner"
 )
 
 // runnerCmd represents the runner command
