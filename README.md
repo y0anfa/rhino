@@ -16,7 +16,7 @@ Rhino is a mini Airflow implementation in Go. It provides a simple way to define
 
 2. Start the Rhino runner with the command `go run main.go runner`. This will start the runner and load the workflows.
 
-3. The runner will start the workflows according to their schedule. You can also trigger workflows manually using webhooks or 'go run main.go run <workflow>'
+3. The runner will start the workflows according to their schedule. You can also trigger workflows manually using webhooks or `go run main.go run <workflow>`
 
 ## Debugging
 
