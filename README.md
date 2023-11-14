@@ -12,11 +12,13 @@ Rhino is a mini Airflow implementation in Go. It provides a simple way to define
 
 ## Usage
 
-1. Define your workflows in a YAML file. Each workflow should include a list of tasks and an order field that specifies the order in which the tasks should be run.
+1. Configure Rhino with a `config.yaml` file at the root of the project.
 
-2. Start the Rhino runner with the command `go run main.go runner`. This will start the runner and load the workflows.
+2. Define your workflows in a YAML file. Each workflow should include a list of tasks and an order field that specifies the order in which the tasks should be run.
 
-3. The runner will start the workflows according to their schedule. You can also trigger workflows manually using webhooks or `go run main.go run <workflow>`
+3. Start the Rhino runner with the command `go run main.go runner`. This will start the runner and load the workflows.
+
+4. The runner will start the workflows according to their schedule. You can also trigger workflows manually using webhooks or `go run main.go run <workflow>`
 
 ## Debugging
 
