@@ -16,7 +16,7 @@ var runCmd = &cobra.Command{
 and usage of using your command.`,
 	Args: cobra.ExactArgs(1),
 	Run: func(cmd *cobra.Command, args []string) {
-		w, err := workflow.LoadWorkflow("workflows", args[0])
+		w, err := workflow.LoadWorkflow(args[0])
 		if err != nil {
 			panic(err)
 		} else {

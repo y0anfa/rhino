@@ -7,22 +7,24 @@ import (
 	"strings"
 	"sync"
 
+	"github.com/y0anfa/rhino/internal/config"
 	"gopkg.in/yaml.v3"
 )
 
 type Workflow struct {
-	Name        string
-	Description string
-	Trigger     Trigger
-	Tasks       []Task
-	Order	    [][]string
+	Name        string     `yaml:"name"`
+	Description string     `yaml:"description"`
+	Trigger     Trigger    `yaml:"trigger"`
+	Tasks       []Task 	   `yaml:"tasks"`
+	Order	    [][]string `yaml:"order"`
 }
 
 func NewWorkflow(name string, desc string) *Workflow {
 	return &Workflow{Name: name, Description: desc}
 }
 
-func DeleteWorkflow(dir string, name string) error {
+func DeleteWorkflow(name string) error {
+	dir := config.GetString("workflows-dir")
 	err := os.Remove(dir + "/" + name + ".yaml")
 	if err != nil {
 		return err
@@ -42,7 +44,9 @@ func (w *Workflow) Describe() string {
 	return desc
 }
 
-func ListWorkflows(dir string) ([]string, error) {
+func ListWorkflows() ([]string, error) {
+	dir := config.GetString("workflows-dir")
+
 	var workflows []string
 	files, err := os.ReadDir(dir)
 	if err != nil {
@@ -86,46 +90,48 @@ func (w *Workflow) Validate() error {
 		return fmt.Errorf("workflow name is empty")
 	}
 	if w.Trigger.Name == "" {
-		return fmt.Errorf("workflow trigger name is empty")
+		return fmt.Errorf("trigger name is empty")
 	}
 	if w.Trigger.Type == "" {
-		return fmt.Errorf("workflow trigger type is empty")
+		return fmt.Errorf("trigger type is empty")
 	}
 	if w.Trigger.Type == TriggerScheduled && w.Trigger.Schedule == "" {
-		return fmt.Errorf("workflow trigger schedule is empty")
+		return fmt.Errorf("trigger schedule is empty")
 	}
 	if len(w.Tasks) == 0 {
-		return fmt.Errorf("workflow tasks are empty")
+		return fmt.Errorf("tasks are empty")
 	}
 	for _, t := range w.Tasks {
 		if t.Name == "" {
-			return fmt.Errorf("workflow task name is empty")
+			return fmt.Errorf("task name is empty")
 		}
 		if t.Provider == "" {
-			return fmt.Errorf("workflow task provider is empty")
+			return fmt.Errorf("task %s provider is empty", t.Name)
 		}
 		if len(t.Command) == 0 {
-			return fmt.Errorf("workflow task command is empty")
+			return fmt.Errorf("task %s command is empty", t.Name)
 		}
 	}
 	if len(w.Order) == 0 {
-		return fmt.Errorf("workflow order is empty")
+		return fmt.Errorf("order is empty")
 	}
 	for _, group := range w.Order {
 		if len(group) == 0 {
-			return fmt.Errorf("workflow order group is empty")
+			return fmt.Errorf("order group is empty")
 		}
 		for _, taskName := range group {
 			task := w.GetTask(taskName)
 			if task == nil {
-				return fmt.Errorf("workflow order task not found")
+				return fmt.Errorf("task %s not found", taskName)
 			}
 		}
 	}
 	return nil
 }
 
-func (w *Workflow) Save(dir string) error {
+func (w *Workflow) Save() error {
+	dir := config.GetString("workflows-dir")
+
 	data, err := yaml.Marshal(w)
 	if err != nil {
 		return err
@@ -143,7 +149,9 @@ func (w *Workflow) Save(dir string) error {
 	}
 }
 
-func LoadWorkflow(dir string, name string) (*Workflow, error) {
+func LoadWorkflow(name string) (*Workflow, error) {
+	dir := config.GetString("workflows-dir")
+
 	file, err := os.Open(dir + "/" + name + ".yaml")
 	if err != nil {
 		return nil, err
@@ -159,14 +167,14 @@ func LoadWorkflow(dir string, name string) (*Workflow, error) {
 	}
 }
 
-func LoadWorkflows(dir string) ([]Workflow, error) {
+func LoadWorkflows() ([]Workflow, error) {
 	var workflows []Workflow
-	workflowsList, err := ListWorkflows(dir)
+	workflowsList, err := ListWorkflows()
 	if err != nil {
 		return nil, err
 	}
 	for _, w := range workflowsList {
-		workflow, err := LoadWorkflow(dir, w)
+		workflow, err := LoadWorkflow(w)
 		if err != nil {
 			return nil, err
 		}

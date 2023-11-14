@@ -23,7 +23,7 @@ to quickly create a Cobra application.`,
 	Args: cobra.ExactArgs(1),
 	Run: func(cmd *cobra.Command, args []string) {
 		fmt.Println("Deleting workflow " + args[0])
-		err := workflow.DeleteWorkflow("workflows", args[0])
+		err := workflow.DeleteWorkflow(args[0])
 		if err != nil {
 			fmt.Println(err)
 		}

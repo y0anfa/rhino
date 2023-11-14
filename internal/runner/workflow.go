@@ -4,9 +4,11 @@ import (
 	"context"
 	"log"
 	"net/http"
+	"strconv"
 	"sync"
 
 	"github.com/robfig/cron/v3"
+	"github.com/y0anfa/rhino/internal/config"
 	"github.com/y0anfa/rhino/internal/workflow"
 )
 
@@ -83,8 +85,12 @@ func RunScheduledWorkflow(ctx context.Context, wf workflow.Workflow) {
 func RunWebhookWorkflow(ctx context.Context, wf workflow.Workflow) {
 	muxSetup.Do(func() {
 		go func() {
-			log.Fatal(http.ListenAndServe(":8888", mux))
+			log.Fatal(http.ListenAndServe(":" + strconv.Itoa(config.GetInt("port")), mux))
 		}()
+	})
+
+	mux.HandleFunc("/health", func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusOK)
 	})
 
 	mux.HandleFunc("/webhook/"+wf.Name, func(w http.ResponseWriter, r *http.Request) {

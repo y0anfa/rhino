@@ -13,10 +13,10 @@ const (
 )
 
 type Trigger struct {
-	Name        string
-	Description string
-	Type        TriggerType
-	Schedule    string
+	Name        string 	    `yaml:"name"`
+	Description string      `yaml:"description"`
+	Type        TriggerType `yaml:"type"`
+	Schedule    string 	    `yaml:"schedule"`
 }
 
 func NewTrigger(name string, desc string, triggertype TriggerType, schedule string) (*Trigger, error) {

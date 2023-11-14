@@ -5,26 +5,31 @@ import (
 	"log"
 
 	"github.com/fsnotify/fsnotify"
+	"github.com/y0anfa/rhino/internal/config"
 	"github.com/y0anfa/rhino/internal/workflow"
 )
 
 func WatchWorkflows(workflowsChan chan<- []workflow.Workflow) error {
+	dir := config.GetString("workflows-dir")
+
 	watcher, err := fsnotify.NewWatcher()
 	if err != nil {
 		return err
 	}
 	defer watcher.Close()
 
-	err = watcher.Add("workflows")
+	err = watcher.Add(dir)
 	if err != nil {
 		return err
 	}
 
-	workflows, err := workflow.LoadWorkflows("workflows")
+	log.Println("watching workflows directory:", dir)
+	workflows, err := workflow.LoadWorkflows()
 	if err != nil {
 		return err
 	}
 
+	log.Println("loaded workflows:", workflows)
 	workflowsChan <- workflows
 
 	for {
@@ -36,7 +41,7 @@ func WatchWorkflows(workflowsChan chan<- []workflow.Workflow) error {
 
 			if event.Op&fsnotify.Write == fsnotify.Write {
 				log.Println("modified file:", event.Name)
-				workflows, err = workflow.LoadWorkflows("workflows")
+				workflows, err = workflow.LoadWorkflows()
 				if err != nil {
 					return err
 				}

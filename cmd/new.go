@@ -20,7 +20,7 @@ to quickly create a Cobra application.`,
 	Args: cobra.ExactArgs(1),
 	Run: func(cmd *cobra.Command, args []string) {
 		w := workflow.NewWorkflow(args[0], "A new workflow")
-		err := w.Save("workflows")
+		err := w.Save()
 		if err != nil {
 			panic(err)
 		}

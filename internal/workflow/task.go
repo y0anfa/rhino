@@ -3,10 +3,10 @@ package workflow
 import "github.com/y0anfa/rhino/internal/providers"
 
 type Task struct {
-	Name        string
-	Description string
-	Provider    string
-	Command     []string
+	Name        string   `yaml:"name"`
+	Description string   `yaml:"description"`
+	Provider    string   `yaml:"provider"`
+	Command     []string `yaml:"command"`
 }
 
 func NewTask(name, desc string, parent *Task, provider string, command []string) *Task {
