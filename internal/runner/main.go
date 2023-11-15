@@ -3,7 +3,6 @@ package runner
 import (
 	"context"
 	"log"
-	"net/http"
 
 	"github.com/y0anfa/rhino/internal/workflow"
 )
@@ -16,5 +15,5 @@ func Runner() {
 	go WatchWorkflows(workflowsChan)
 	go RunWorkflows(context.Background(), workflowsChan)
 
-	http.ListenAndServe(":8080", nil)
+	select {}
 }

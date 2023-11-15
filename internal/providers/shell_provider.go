@@ -21,7 +21,7 @@ func (p *ShellProvider) Run(args []string) error {
 	if len(args) < 1 {
 		return fmt.Errorf("no command specified")
 	}
-	cmd := exec.Command(args[0], args[1:]...)
+	cmd := exec.Command(args[0], args[1:]...) // #nosec: G204
 	cmd.Stdin = os.Stdin
 	cmd.Stdout = os.Stdout
 	cmd.Stderr = os.Stderr
