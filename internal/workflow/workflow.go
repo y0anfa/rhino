@@ -1,27 +1,31 @@
 package workflow
 
 import (
+	"context"
 	"fmt"
-	"log"
 	"os"
 	"path/filepath"
 	"strings"
 	"sync"
+	"time"
 
 	"github.com/y0anfa/rhino/internal/config"
+	"github.com/y0anfa/rhino/internal/logger"
+	"go.uber.org/zap"
 	"gopkg.in/yaml.v3"
 )
 
 type Workflow struct {
 	Name        string     `yaml:"name"`
 	Description string     `yaml:"description"`
+	Settings    Settings   `yaml:"settings"`
 	Trigger     Trigger    `yaml:"trigger"`
-	Tasks       []Task 	   `yaml:"tasks"`
-	Order	    [][]string `yaml:"order"`
+	Tasks       []Task     `yaml:"tasks"`
+	Order       [][]string `yaml:"order"`
 }
 
 func NewWorkflow(name string, desc string) *Workflow {
-	return &Workflow{Name: name, Description: desc}
+	return &Workflow{Name: name, Description: desc, Settings: *NewSettings(MaxTriesDefault, TimeoutDefault)}
 }
 
 func DeleteWorkflow(name string) error {
@@ -74,7 +78,7 @@ func (w *Workflow) RemoveTask(task Task) (string, error) {
 			return t.Name, nil
 		}
 	}
-	return "", fmt.Errorf("task not found")
+	return "", fmt.Errorf("task %s not found", task.Name)
 }
 
 func (w *Workflow) GetTask(name string) *Task {
@@ -89,6 +93,12 @@ func (w *Workflow) GetTask(name string) *Task {
 func (w *Workflow) Validate() error {
 	if w.Name == "" {
 		return fmt.Errorf("workflow name is empty")
+	}
+	if w.Settings.MaxTries <= 0 {
+		return fmt.Errorf("max tries is invalid")
+	}
+	if w.Settings.Timeout == "" {
+		return fmt.Errorf("timeout is empty")
 	}
 	if w.Trigger.Name == "" {
 		return fmt.Errorf("trigger name is empty")
@@ -181,7 +191,7 @@ func LoadWorkflows() ([]Workflow, error) {
 		}
 		err = workflow.Validate()
 		if err != nil {
-			log.Fatalf("workflow %s is invalid: %s", workflow.Name, err)
+			logger.Fatal("workflow is invalid ", workflow.Name, zap.Error(err))
 		}
 		workflows = append(workflows, *workflow)
 	}
@@ -194,13 +204,41 @@ func (w *Workflow) Run() error {
 
 		for _, taskName := range group {
 			task := w.GetTask(taskName)
+			if task.MaxTries == 0 {
+				task.MaxTries = w.Settings.MaxTries
+			}
 			wg.Add(1)
 
 			go func(t *Task) {
 				defer wg.Done()
-				err := t.Run()
+				var err error
+				for try := 0; try < task.MaxTries; try++ {
+					timeout, err := time.ParseDuration(w.Settings.Timeout)
+					if err != nil {
+						logger.Error("invalid timeout ", w.Settings.Timeout, zap.Error(err))
+						break
+					}
+					ctx, cancel := context.WithTimeout(context.Background(), timeout)
+					defer cancel()
+
+					errChan := make(chan error, 1)
+					go func() {
+						errChan <- t.Run()
+					}()
+
+					select {
+					case <-ctx.Done():
+						err = ctx.Err()
+						logger.Error("task timed out ", t.Name, zap.Error(err))
+					case err = <-errChan:
+					}
+
+					if err == nil {
+						break
+					}
+				}
 				if err != nil {
-					log.Println(err)
+					logger.Error("task reached max tries ", t.Name, zap.Error(err))
 				}
 			}(task)
 		}

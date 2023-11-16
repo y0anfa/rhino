@@ -2,13 +2,13 @@ package runner
 
 import (
 	"context"
-	"log"
 
+	"github.com/y0anfa/rhino/internal/logger"
 	"github.com/y0anfa/rhino/internal/workflow"
 )
 
 func Runner() {
-	log.Println("starting runner...")
+	logger.Info("starting runner...")
 
 	workflowsChan := make(chan []workflow.Workflow)
 

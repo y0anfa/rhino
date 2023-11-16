@@ -2,10 +2,10 @@ package runner
 
 import (
 	"fmt"
-	"log"
 
 	"github.com/fsnotify/fsnotify"
 	"github.com/y0anfa/rhino/internal/config"
+	"github.com/y0anfa/rhino/internal/logger"
 	"github.com/y0anfa/rhino/internal/workflow"
 )
 
@@ -23,13 +23,13 @@ func WatchWorkflows(workflowsChan chan<- []workflow.Workflow) error {
 		return err
 	}
 
-	log.Println("watching workflows directory:", dir)
+	logger.Debug("watching workflows directory", dir)
 	workflows, err := workflow.LoadWorkflows()
 	if err != nil {
 		return err
 	}
 
-	log.Println("loaded workflows:", workflows)
+	logger.Debug("loaded workflows:", workflows)
 	workflowsChan <- workflows
 
 	for {
@@ -40,7 +40,7 @@ func WatchWorkflows(workflowsChan chan<- []workflow.Workflow) error {
 			}
 
 			if event.Op&fsnotify.Write == fsnotify.Write {
-				log.Println("modified file:", event.Name)
+				logger.Info("file modified", event.Name)
 				workflows, err = workflow.LoadWorkflows()
 				if err != nil {
 					return err

@@ -4,11 +4,11 @@ Copyright © 2023 NAME HERE <EMAIL ADDRESS>
 package cmd
 
 import (
-	"log"
 	"os"
 
 	"github.com/spf13/cobra"
 	"github.com/y0anfa/rhino/internal/config"
+	"github.com/y0anfa/rhino/internal/logger"
 )
 
 // rootCmd represents the base command when called without any subcommands
@@ -40,14 +40,14 @@ func init() {
 }
 
 func initConfig() {
-	log.Println("initializing config")
+	logger.Info("initializing config")
 	if config.ConfigFileExists() {
-		log.Println("config file exists")
+		logger.Info("config file exists")
 	} else {
-		log.Println("config file does not exist")
+		logger.Info("config file does not exist")
 		err := config.SaveDefaultConfig()
 		if err != nil {
-			log.Fatal(err)
+			logger.Fatal(err)
 		}
 	}
 }

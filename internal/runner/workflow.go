@@ -2,7 +2,6 @@ package runner
 
 import (
 	"context"
-	"log"
 	"net/http"
 	"strconv"
 	"sync"
@@ -10,6 +9,7 @@ import (
 
 	"github.com/robfig/cron/v3"
 	"github.com/y0anfa/rhino/internal/config"
+	"github.com/y0anfa/rhino/internal/logger"
 	"github.com/y0anfa/rhino/internal/workflow"
 )
 
@@ -31,7 +31,7 @@ func RunWorkflows(ctx context.Context, workflowsChan <-chan []workflow.Workflow)
 				}
 			}
 			if !found {
-				log.Println("stopping workflow", name)
+				logger.Info("workflow stopping ", name)
 				cancel()
 				delete(activeWorkflows, name)
 			}
@@ -39,7 +39,7 @@ func RunWorkflows(ctx context.Context, workflowsChan <-chan []workflow.Workflow)
 
 		for _, wf := range workflows {
 			if _, ok := activeWorkflows[wf.Name]; !ok {
-				log.Println("starting workflow", wf.Name)
+				logger.Info("workflow starting ", wf.Name)
 				ctx, cancel := context.WithCancel(ctx)
 				activeWorkflows[wf.Name] = cancel
 				switch wf.Trigger.Type {
@@ -48,7 +48,7 @@ func RunWorkflows(ctx context.Context, workflowsChan <-chan []workflow.Workflow)
 				case workflow.TriggerWebhook:
 					go RunWebhookWorkflow(ctx, wf)
 				default:
-					log.Printf("invalid trigger type %s on workflow %s", wf.Trigger.Name, wf.Name)
+					logger.Error("invalid trigger type ", wf.Trigger.Name, wf.Name)
 				}
 			}
 		}
@@ -60,26 +60,26 @@ func RunScheduledWorkflow(ctx context.Context, wf workflow.Workflow) {
 	_, err := c.AddFunc(wf.Trigger.Schedule, func() {
 		select {
 		case <-ctx.Done():
-			log.Printf("stopping workflow %s", wf.Name)
+			logger.Info("workflow stopping ", wf.Name)
 			return
 		default:
-			log.Printf("running workflow %s", wf.Name)
+			logger.Info("workflow running ", wf.Name)
 			err := wf.Run()
 			if err != nil {
-				log.Printf("error running workflow %s: %s", wf.Name, err)
+				logger.Error("error running workflow ", wf.Name, err)
 			}
 		}
 	})
 
 	if err != nil {
-		log.Printf("error scheduling workflow %s: %s", wf.Name, err)
+		logger.Error("error scheduling workflow ", wf.Name, err)
 	}
 
 	c.Start()
-	log.Println("started cron on workflow", wf.Name)
+	logger.Info("workflow scheduling started ", wf.Name)
 
 	<-ctx.Done()
-	log.Println("stopping cron on workflow", wf.Name)
+	logger.Info("workflow scheduling stopped ", wf.Name)
 	c.Stop()
 }
 
@@ -93,7 +93,7 @@ func RunWebhookWorkflow(ctx context.Context, wf workflow.Workflow) {
 			}
 			err := server.ListenAndServe()
 			if err != nil {
-				log.Fatal(err)
+				logger.Fatal(err)
 			}
 		}()
 	})
@@ -105,13 +105,13 @@ func RunWebhookWorkflow(ctx context.Context, wf workflow.Workflow) {
 	mux.HandleFunc("/webhook/"+wf.Name, func(w http.ResponseWriter, r *http.Request) {
 		select {
 		case <-ctx.Done():
-			log.Printf("stopping workflow %s", wf.Name)
+			logger.Info("workflow starting ", wf.Name)
 			return
 		default:
-			log.Printf("running workflow %s", wf.Name)
+			logger.Info("workflow running ", wf.Name)
 			err := wf.Run()
 			if err != nil {
-				log.Printf("error running workflow %s: %s", wf.Name, err)
+				logger.Error("error running workflow ", wf.Name, err)
 			}
 		}
 	})
