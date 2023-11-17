@@ -35,8 +35,12 @@ func (p *HTTPProvider) Validate(args map[string]interface{}) error {
 				return fmt.Errorf("invalid body parameter")
 			}
 		case "headers":
-			if _, ok := value.(map[string]string); !ok {
-				return fmt.Errorf("invalid headers parameter")
+			if _, ok := value.(map[string]interface{}); !ok {
+				for _, header := range value.([]interface{}) {
+					if _, ok := header.(string); !ok {
+						return fmt.Errorf("invalid headers parameter")
+					}
+				}
 			}
 		default:
 			return fmt.Errorf("unknown parameter: %s", key)
@@ -54,20 +58,18 @@ func (p *HTTPProvider) Run(args map[string]interface{}) error {
 	method := strings.ToUpper(args["method"].(string))
 	url := args["url"].(string)
 	body := args["body"].(string)
-	
+
 	req, err := http.NewRequest(method, url, strings.NewReader(body))
 	if err != nil {
 		return err
 	}
-	if args["headers"] != "" {
-		headers, ok := args["headers"].(map[string]string)
-		if !ok {
-			return fmt.Errorf("invalid headers parameter")
-		}
-		for k, v := range headers {
-			req.Header.Add(k, v)
+
+	if args["headers"] != nil {
+		for key, value := range args["headers"].(map[string]interface{}) {
+			req.Header.Add(key, value.(string))
 		}
 	}
+
 	client := &http.Client{}
 	resp, err := client.Do(req)
 	if err != nil {
