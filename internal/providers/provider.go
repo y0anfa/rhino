@@ -10,8 +10,10 @@ import (
 type Provider interface {
 	// Name returns the name of the provider.
 	Name() string
+	// Validate validates the provider arguments.
+	Validate(args map[string]interface{}) error
 	// Run runs the provider with the given arguments.
-	Run(args []string) error
+	Run(args map[string]interface{}) error
 }
 
 // Create a map of providers.

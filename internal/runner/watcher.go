@@ -23,13 +23,13 @@ func WatchWorkflows(workflowsChan chan<- []workflow.Workflow) error {
 		return err
 	}
 
-	logger.Debug("watching workflows directory", dir)
+	logger.Info("watching workflows directory: ", dir)
 	workflows, err := workflow.LoadWorkflows()
 	if err != nil {
 		return err
 	}
 
-	logger.Debug("loaded workflows:", workflows)
+	logger.Info("loaded workflows: ", workflows)
 	workflowsChan <- workflows
 
 	for {

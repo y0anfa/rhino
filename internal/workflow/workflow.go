@@ -119,7 +119,7 @@ func (w *Workflow) Validate() error {
 		if t.Provider == "" {
 			return fmt.Errorf("task %s provider is empty", t.Name)
 		}
-		if len(t.Command) == 0 {
+		if len(t.Params) == 0 {
 			return fmt.Errorf("task %s command is empty", t.Name)
 		}
 	}
@@ -151,6 +151,8 @@ func (w *Workflow) Save() error {
 		if err != nil {
 			return err
 		}
+		defer file.Close()
+		logger.Info("saving workflow to ", filepath.Clean(dir+"/"+w.Name+".yaml"))
 		_, err = file.Write(data)
 		if err != nil {
 			return err
@@ -160,20 +162,20 @@ func (w *Workflow) Save() error {
 	}
 }
 
-func LoadWorkflow(name string) (*Workflow, error) {
+func LoadWorkflow(name string) (Workflow, error) {
 	dir := config.GetString("workflows-dir")
-
-	file, err := os.Open(filepath.Clean(dir + "/" + name + ".yaml"))
+	
+	file, err := os.ReadFile(filepath.Clean(dir + "/" + name + ".yaml"))
 	if err != nil {
-		return nil, err
+		return Workflow{}, err
 	} else {
-		decoder := yaml.NewDecoder(file)
 		var workflow Workflow
-		err = decoder.Decode(&workflow)
+		err = yaml.Unmarshal(file, &workflow)
 		if err != nil {
-			return nil, err
+			logger.Error("error decoding workflow ", name, zap.Error(err))
+			return Workflow{}, err
 		} else {
-			return &workflow, nil
+			return workflow, nil
 		}
 	}
 }
@@ -193,7 +195,7 @@ func LoadWorkflows() ([]Workflow, error) {
 		if err != nil {
 			logger.Fatal("workflow is invalid ", workflow.Name, zap.Error(err))
 		}
-		workflows = append(workflows, *workflow)
+		workflows = append(workflows, workflow)
 	}
 	return workflows, nil
 }
@@ -231,6 +233,11 @@ func (w *Workflow) Run() error {
 						err = ctx.Err()
 						logger.Error("task timed out ", t.Name, zap.Error(err))
 					case err = <-errChan:
+						if err != nil {
+							logger.Error("task failed ", t.Name, zap.Error(err))
+						} else {
+							logger.Info("task succeeded ", t.Name)
+						}
 					}
 
 					if err == nil {

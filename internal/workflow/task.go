@@ -1,18 +1,20 @@
 package workflow
 
-import "github.com/y0anfa/rhino/internal/providers"
+import (
+	"github.com/y0anfa/rhino/internal/providers"
+)
 
 type Task struct {
-	Name        string   `yaml:"name"`
-	Description string   `yaml:"description"`
-	MaxTries    int      `yaml:"max-tries"`
-	Provider    string   `yaml:"provider"`
-	Command     []string `yaml:"command"`
+	Description string              `yaml:"description"`
+	Name        string                 `yaml:"name"`
+	MaxTries    int                    `yaml:"max-tries"`
+	Provider    string                 `yaml:"provider"`
+	Params      map[string]interface{} `yaml:"params"`
 }
 
-func NewTask(name, desc string, provider string, command []string) *Task {
+func NewTask(name, desc string, provider string, params map[string]interface{}) *Task {
 
-	return &Task{Name: name, Description: desc, Provider: provider, Command: command}
+	return &Task{Name: name, Description: desc, Provider: provider, Params: params}
 }
 
 func (t *Task) Run() error {
@@ -22,5 +24,9 @@ func (t *Task) Run() error {
 		return err
 	}
 	// Run the provider.
-	return provider.Run(t.Command)
+	err = provider.Run(t.Params)
+	if err != nil {
+		return err
+	}
+	return nil
 }

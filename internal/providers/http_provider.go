@@ -12,37 +12,67 @@ func (p *HTTPProvider) Name() string {
 	return "http"
 }
 
-func (p *HTTPProvider) Run(args []string) error {
-	// args[0] should be the method (GET, POST, etc.)
-	// args[1] should be the URL
-	// args[2:] could be optional parameters, like headers or body content
-	// Use the net/http package to make the request
-	if len(args) < 2 {
-		return fmt.Errorf("no URL specified")
-	}
-	method := args[0]
-	url := args[1]
-	req, err := http.NewRequest(method, url, nil)
-	if err != nil {
-		return err
-	}
-	// Add any optional parameters.
-	for _, arg := range args[2:] {
-		// Split the argument by the first colon.
-		// The first part is the header name, the second part is the header value.
-		parts := strings.SplitN(arg, ":", 2)
-		if len(parts) < 2 {
-			return fmt.Errorf("invalid header: %s", arg)
+func (p *HTTPProvider) Validate(args map[string]interface{}) error {
+	requiredParams := []string{"method", "url", "body"}
+	for _, param := range requiredParams {
+		if args[param] == "" {
+			return fmt.Errorf("missing %s parameter", param)
 		}
-		// Add the header to the request.
-		req.Header.Add(parts[0], parts[1])
 	}
-	// Send the request.
-	resp, err := http.DefaultClient.Do(req)
+
+	for key, value := range args {
+		switch key {
+		case "method":
+			if _, ok := value.(string); !ok {
+				return fmt.Errorf("invalid method parameter")
+			}
+		case "url":
+			if _, ok := value.(string); !ok {
+				return fmt.Errorf("invalid url parameter")
+			}
+		case "body":
+			if _, ok := value.(string); !ok {
+				return fmt.Errorf("invalid body parameter")
+			}
+		case "headers":
+			if _, ok := value.(map[string]string); !ok {
+				return fmt.Errorf("invalid headers parameter")
+			}
+		default:
+			return fmt.Errorf("unknown parameter: %s", key)
+		}
+	}
+	return nil
+}
+
+func (p *HTTPProvider) Run(args map[string]interface{}) error {
+	err := p.Validate(args)
 	if err != nil {
 		return err
 	}
-	// Print the response.
+
+	method := strings.ToUpper(args["method"].(string))
+	url := args["url"].(string)
+	body := args["body"].(string)
+	
+	req, err := http.NewRequest(method, url, strings.NewReader(body))
+	if err != nil {
+		return err
+	}
+	if args["headers"] != "" {
+		headers, ok := args["headers"].(map[string]string)
+		if !ok {
+			return fmt.Errorf("invalid headers parameter")
+		}
+		for k, v := range headers {
+			req.Header.Add(k, v)
+		}
+	}
+	client := &http.Client{}
+	resp, err := client.Do(req)
+	if err != nil {
+		return err
+	}
 	fmt.Println(resp.Status)
 	return nil
 }
