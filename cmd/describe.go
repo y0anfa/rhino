@@ -7,7 +7,7 @@ import (
 	"fmt"
 
 	"github.com/spf13/cobra"
-	"github.com/y0anfa/rhino/internal/workflow"
+	"github.com/y0anfa/rhino/internal/models"
 )
 
 // describeCmd represents the describe command
@@ -21,7 +21,7 @@ Cobra is a CLI library for Go that empowers applications.
 This application is a tool to generate the needed files
 to quickly create a Cobra application.`,
 	Run: func(cmd *cobra.Command, args []string) {
-		w, err := workflow.LoadWorkflow(args[0])
+		w, err := models.LoadWorkflow(args[0])
 		if err != nil {
 			fmt.Println(err)
 		}

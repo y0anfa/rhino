@@ -5,7 +5,7 @@ package cmd
 
 import (
 	"github.com/spf13/cobra"
-	"github.com/y0anfa/rhino/internal/workflow"
+	"github.com/y0anfa/rhino/internal/models"
 )
 
 // runCmd represents the run command
@@ -16,7 +16,7 @@ var runCmd = &cobra.Command{
 and usage of using your command.`,
 	Args: cobra.ExactArgs(1),
 	Run: func(cmd *cobra.Command, args []string) {
-		w, err := workflow.LoadWorkflow(args[0])
+		w, err := models.LoadWorkflow(args[0])
 		if err != nil {
 			panic(err)
 		} else {

@@ -10,7 +10,7 @@ import (
 	"github.com/robfig/cron/v3"
 	"github.com/y0anfa/rhino/internal/config"
 	"github.com/y0anfa/rhino/internal/logger"
-	"github.com/y0anfa/rhino/internal/workflow"
+	"github.com/y0anfa/rhino/internal/models"
 )
 
 var (
@@ -18,7 +18,7 @@ var (
 	muxSetup sync.Once
 )
 
-func RunWorkflows(ctx context.Context, workflowsChan <-chan []workflow.Workflow) {
+func RunWorkflows(ctx context.Context, workflowsChan <-chan []models.Workflow) {
 	activeWorkflows := make(map[string]context.CancelFunc)
 
 	for workflows := range workflowsChan {
@@ -43,9 +43,9 @@ func RunWorkflows(ctx context.Context, workflowsChan <-chan []workflow.Workflow)
 				ctx, cancel := context.WithCancel(ctx)
 				activeWorkflows[wf.Name] = cancel
 				switch wf.Trigger.Type {
-				case workflow.TriggerScheduled:
+				case models.TriggerScheduled:
 					go RunScheduledWorkflow(ctx, wf)
-				case workflow.TriggerWebhook:
+				case models.TriggerWebhook:
 					go RunWebhookWorkflow(ctx, wf)
 				default:
 					logger.Error("invalid trigger type ", wf.Trigger.Name, wf.Name)
@@ -55,7 +55,7 @@ func RunWorkflows(ctx context.Context, workflowsChan <-chan []workflow.Workflow)
 	}
 }
 
-func RunScheduledWorkflow(ctx context.Context, wf workflow.Workflow) {
+func RunScheduledWorkflow(ctx context.Context, wf models.Workflow) {
 	c := cron.New()
 	_, err := c.AddFunc(wf.Trigger.Schedule, func() {
 		select {
@@ -83,7 +83,7 @@ func RunScheduledWorkflow(ctx context.Context, wf workflow.Workflow) {
 	c.Stop()
 }
 
-func RunWebhookWorkflow(ctx context.Context, wf workflow.Workflow) {
+func RunWebhookWorkflow(ctx context.Context, wf models.Workflow) {
 	muxSetup.Do(func() {
 		go func() {
 			server := &http.Server{

@@ -5,7 +5,7 @@ package cmd
 
 import (
 	"github.com/spf13/cobra"
-	"github.com/y0anfa/rhino/internal/workflow"
+	"github.com/y0anfa/rhino/internal/models"
 )
 
 var newCmd = &cobra.Command{
@@ -19,8 +19,12 @@ This application is a tool to generate the needed files
 to quickly create a Cobra application.`,
 	Args: cobra.ExactArgs(1),
 	Run: func(cmd *cobra.Command, args []string) {
-		w := workflow.NewWorkflow(args[0], "A new workflow")
-		err := w.Save()
+		workflow := models.NewWorkflow(args[0], "A new workflow")
+		trigger := models.NewTrigger("trigger1", "A new trigger", models.TriggerScheduled, "*/5 * * * *")
+		task := models.NewTask("task1", "A new task", "shell", map[string]interface{}{"command": "echo", "args": []interface{}{"Hello world!"}})
+		workflow.SetTrigger(*trigger)
+		workflow.AddTask(*task)
+		err := workflow.Save()
 		if err != nil {
 			panic(err)
 		}

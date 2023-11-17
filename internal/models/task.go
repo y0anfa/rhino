@@ -1,4 +1,4 @@
-package workflow
+package models
 
 import (
 	"github.com/y0anfa/rhino/internal/providers"
