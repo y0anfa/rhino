@@ -147,7 +147,7 @@ func (w *Workflow) Save() error {
 	if err != nil {
 		return err
 	} else {
-		file, err := os.OpenFile(filepath.Clean(dir+"/"+w.Name+".yaml"), os.O_WRONLY|os.O_CREATE|os.O_TRUNC, 0200)
+		file, err := os.OpenFile(filepath.Clean(dir+"/"+w.Name+".yaml"), os.O_WRONLY|os.O_CREATE|os.O_TRUNC, 0644)
 		if err != nil {
 			return err
 		}
