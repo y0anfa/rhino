@@ -9,8 +9,11 @@ var (
 
 func init() {
 	Logger, _ = zap.NewProduction()
-	defer Logger.Sync()
 	Sugar = Logger.Sugar()
+}
+
+func Sync() {
+	Logger.Sync()
 }
 
 func Debug(fields ...interface{}) {

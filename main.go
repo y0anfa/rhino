@@ -1,11 +1,11 @@
-/*
-Copyright © 2023 NAME HERE <EMAIL ADDRESS>
-
-*/
 package main
 
-import "github.com/y0anfa/rhino/cmd"
+import (
+	"github.com/y0anfa/rhino/cmd"
+	"github.com/y0anfa/rhino/internal/logger"
+)
 
 func main() {
+	defer logger.Sync()
 	cmd.Execute()
 }
