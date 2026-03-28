@@ -84,9 +84,9 @@ func (w *Workflow) RemoveTask(task Task) (string, error) {
 }
 
 func (w *Workflow) GetTask(name string) *Task {
-	for _, t := range w.Tasks {
-		if t.Name == name {
-			return &t
+	for i := range w.Tasks {
+		if w.Tasks[i].Name == name {
+			return &w.Tasks[i]
 		}
 	}
 	return nil
