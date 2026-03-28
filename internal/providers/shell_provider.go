@@ -23,8 +23,8 @@ func (p *ShellProvider) Name() string {
 func (p *ShellProvider) Validate(args map[string]interface{}) error {
 	requiredParams := []string{"command", "args"}
 	for _, param := range requiredParams {
-		if args[param] == "" {
-			return fmt.Errorf("missing %s parameter", param)
+		if args[param] == nil || args[param] == "" {
+			return fmt.Errorf("shell provider validation failed: missing required parameter '%s'", param)
 		}
 	}
 
@@ -32,18 +32,22 @@ func (p *ShellProvider) Validate(args map[string]interface{}) error {
 		switch key {
 		case "command":
 			if _, ok := value.(string); !ok {
-				return fmt.Errorf("invalid command parameter")
+				return fmt.Errorf("shell provider validation failed: command must be a string, got %T", value)
+			}
+			if value.(string) == "" {
+				return fmt.Errorf("shell provider validation failed: command cannot be empty")
 			}
 		case "args":
 			if _, ok := value.([]interface{}); !ok {
-				for _, arg := range value.([]interface{}) {
-					if _, ok := arg.(string); !ok {
-						return fmt.Errorf("invalid args parameter")
-					}
+				return fmt.Errorf("shell provider validation failed: args must be a list, got %T", value)
+			}
+			for _, arg := range value.([]interface{}) {
+				if _, ok := arg.(string); !ok {
+					return fmt.Errorf("shell provider validation failed: args must be strings, got %T", arg)
 				}
 			}
 		default:
-			return fmt.Errorf("unknown parameter: %s", key)
+			return fmt.Errorf("shell provider validation failed: unknown parameter '%s'", key)
 		}
 	}
 	return nil

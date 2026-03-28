@@ -1,11 +1,13 @@
 package models
 
 import (
+	"fmt"
+
 	"github.com/y0anfa/rhino/internal/providers"
 )
 
 type Task struct {
-	Description string              `yaml:"description"`
+	Description string                 `yaml:"description"`
 	Name        string                 `yaml:"name"`
 	MaxTries    int                    `yaml:"max-tries"`
 	Provider    string                 `yaml:"provider"`
@@ -21,12 +23,17 @@ func (t *Task) Run() error {
 	// Get the provider.
 	provider, err := providers.Get(t.Provider)
 	if err != nil {
-		return err
+		return fmt.Errorf("task execution failed: unknown provider '%s': %w", t.Provider, err)
+	}
+	// Validate provider arguments before running
+	err = provider.Validate(t.Params)
+	if err != nil {
+		return fmt.Errorf("task execution failed: validation failed for task '%s': %w", t.Name, err)
 	}
 	// Run the provider.
 	err = provider.Run(t.Params)
 	if err != nil {
-		return err
+		return fmt.Errorf("task execution failed: provider '%s' failed for task '%s': %w", t.Provider, t.Name, err)
 	}
 	return nil
 }

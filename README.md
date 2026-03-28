@@ -8,7 +8,7 @@ Rhino is a mini Airflow implementation in Go. It provides a simple way to define
 - Schedule tasks using cron syntax
 - Run tasks concurrently within a workflow
 - Control the order of task execution within a workflow
-- Support for webhook triggers (multiple workflows on single port)
+- Support for triggers (multiple workflows on single port)
 - Flexible configuration via YAML files and environment variables
 - Built-in providers: Shell and HTTP
 

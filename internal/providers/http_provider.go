@@ -2,7 +2,9 @@ package providers
 
 import (
 	"fmt"
+	"io"
 	"net/http"
+	"net/url"
 	"strings"
 )
 
@@ -13,10 +15,10 @@ func (p *HTTPProvider) Name() string {
 }
 
 func (p *HTTPProvider) Validate(args map[string]interface{}) error {
-	requiredParams := []string{"method", "url", "body"}
+	requiredParams := []string{"method", "url"}
 	for _, param := range requiredParams {
-		if args[param] == "" {
-			return fmt.Errorf("missing %s parameter", param)
+		if args[param] == nil || args[param] == "" {
+			return fmt.Errorf("http provider validation failed: missing required parameter '%s'", param)
 		}
 	}
 
@@ -24,26 +26,38 @@ func (p *HTTPProvider) Validate(args map[string]interface{}) error {
 		switch key {
 		case "method":
 			if _, ok := value.(string); !ok {
-				return fmt.Errorf("invalid method parameter")
+				return fmt.Errorf("http provider validation failed: method must be a string, got %T", value)
+			}
+			method := strings.ToUpper(value.(string))
+			if method != "GET" && method != "POST" && method != "PUT" && method != "DELETE" && method != "PATCH" {
+				return fmt.Errorf("http provider validation failed: invalid HTTP method '%s'", method)
 			}
 		case "url":
 			if _, ok := value.(string); !ok {
-				return fmt.Errorf("invalid url parameter")
+				return fmt.Errorf("http provider validation failed: url must be a string, got %T", value)
+			}
+			if _, err := url.ParseRequestURI(value.(string)); err != nil {
+				return fmt.Errorf("http provider validation failed: invalid url '%s': %w", value.(string), err)
 			}
 		case "body":
-			if _, ok := value.(string); !ok {
-				return fmt.Errorf("invalid body parameter")
+			if value != nil && value != "" {
+				if _, ok := value.(string); !ok {
+					return fmt.Errorf("http provider validation failed: body must be a string, got %T", value)
+				}
 			}
 		case "headers":
-			if _, ok := value.(map[string]interface{}); !ok {
-				for _, header := range value.([]interface{}) {
-					if _, ok := header.(string); !ok {
-						return fmt.Errorf("invalid headers parameter")
+			if value != nil {
+				if _, ok := value.(map[string]interface{}); !ok {
+					return fmt.Errorf("http provider validation failed: headers must be a map, got %T", value)
+				}
+				for headerKey, headerValue := range value.(map[string]interface{}) {
+					if _, ok := headerValue.(string); !ok {
+						return fmt.Errorf("http provider validation failed: header '%s' must be a string, got %T", headerKey, headerValue)
 					}
 				}
 			}
 		default:
-			return fmt.Errorf("unknown parameter: %s", key)
+			return fmt.Errorf("http provider validation failed: unknown parameter '%s'", key)
 		}
 	}
 	return nil
@@ -56,10 +70,14 @@ func (p *HTTPProvider) Run(args map[string]interface{}) error {
 	}
 
 	method := strings.ToUpper(args["method"].(string))
-	url := args["url"].(string)
-	body := args["body"].(string)
+	reqURL := args["url"].(string)
 
-	req, err := http.NewRequest(method, url, strings.NewReader(body))
+	var body string
+	if b, ok := args["body"]; ok && b != nil {
+		body, _ = b.(string)
+	}
+
+	req, err := http.NewRequest(method, reqURL, strings.NewReader(body))
 	if err != nil {
 		return err
 	}
@@ -75,6 +93,9 @@ func (p *HTTPProvider) Run(args map[string]interface{}) error {
 	if err != nil {
 		return err
 	}
+	defer resp.Body.Close()
+	io.Copy(io.Discard, resp.Body)
+
 	fmt.Println(resp.Status)
 	return nil
 }

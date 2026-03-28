@@ -9,8 +9,10 @@ import (
 	"sync"
 	"time"
 
+	"github.com/robfig/cron/v3"
 	"github.com/y0anfa/rhino/internal/config"
 	"github.com/y0anfa/rhino/internal/logger"
+	"github.com/y0anfa/rhino/internal/providers"
 	"go.uber.org/zap"
 	"gopkg.in/yaml.v3"
 )
@@ -92,48 +94,64 @@ func (w *Workflow) GetTask(name string) *Task {
 
 func (w *Workflow) Validate() error {
 	if w.Name == "" {
-		return fmt.Errorf("workflow name is empty")
+		return fmt.Errorf("workflow validation failed: name is empty")
 	}
 	if w.Settings.MaxTries <= 0 {
-		return fmt.Errorf("max tries is invalid")
+		return fmt.Errorf("workflow validation failed: max tries must be greater than 0, got %d", w.Settings.MaxTries)
 	}
 	if w.Settings.Timeout == "" {
-		return fmt.Errorf("timeout is empty")
+		return fmt.Errorf("workflow validation failed: timeout is empty")
+	}
+	if _, err := time.ParseDuration(w.Settings.Timeout); err != nil {
+		return fmt.Errorf("workflow validation failed: invalid timeout format '%s': %w", w.Settings.Timeout, err)
 	}
 	if w.Trigger.Name == "" {
-		return fmt.Errorf("trigger name is empty")
+		return fmt.Errorf("workflow validation failed: trigger name is empty")
 	}
 	if w.Trigger.Type == "" {
-		return fmt.Errorf("trigger type is empty")
+		return fmt.Errorf("workflow validation failed: trigger type is empty")
 	}
 	if w.Trigger.Type == TriggerScheduled && w.Trigger.Schedule == "" {
-		return fmt.Errorf("trigger schedule is empty")
+		return fmt.Errorf("workflow validation failed: trigger schedule is empty for cron trigger")
+	}
+	if w.Trigger.Type == TriggerScheduled {
+		if _, err := cron.ParseStandard(w.Trigger.Schedule); err != nil {
+			return fmt.Errorf("workflow validation failed: invalid cron schedule '%s': %w", w.Trigger.Schedule, err)
+		}
 	}
 	if len(w.Tasks) == 0 {
-		return fmt.Errorf("tasks are empty")
+		return fmt.Errorf("workflow validation failed: tasks list is empty")
 	}
 	for _, t := range w.Tasks {
 		if t.Name == "" {
-			return fmt.Errorf("task name is empty")
+			return fmt.Errorf("workflow validation failed: task name is empty")
 		}
 		if t.Provider == "" {
-			return fmt.Errorf("task %s provider is empty", t.Name)
+			return fmt.Errorf("workflow validation failed: task '%s' provider is empty", t.Name)
 		}
 		if len(t.Params) == 0 {
-			return fmt.Errorf("task %s command is empty", t.Name)
+			return fmt.Errorf("workflow validation failed: task '%s' params are empty", t.Name)
+		}
+		// Validate task provider
+		provider, err := providers.Get(t.Provider)
+		if err != nil {
+			return fmt.Errorf("workflow validation failed: task '%s' has unknown provider '%s': %w", t.Name, t.Provider, err)
+		}
+		if err := provider.Validate(t.Params); err != nil {
+			return fmt.Errorf("workflow validation failed: task '%s' validation failed: %w", t.Name, err)
 		}
 	}
 	if len(w.Order) == 0 {
-		return fmt.Errorf("order is empty")
+		return fmt.Errorf("workflow validation failed: order is empty")
 	}
 	for _, group := range w.Order {
 		if len(group) == 0 {
-			return fmt.Errorf("order group is empty")
+			return fmt.Errorf("workflow validation failed: order group is empty")
 		}
 		for _, taskName := range group {
 			task := w.GetTask(taskName)
 			if task == nil {
-				return fmt.Errorf("task %s not found", taskName)
+				return fmt.Errorf("workflow validation failed: task '%s' not found in order", taskName)
 			}
 		}
 	}
@@ -164,7 +182,7 @@ func (w *Workflow) Save() error {
 
 func LoadWorkflow(name string) (Workflow, error) {
 	dir := config.GetString("workflows-dir")
-	
+
 	file, err := os.ReadFile(filepath.Clean(dir + "/" + name + ".yaml"))
 	if err != nil {
 		return Workflow{}, err
@@ -217,7 +235,7 @@ func (w *Workflow) Run() error {
 				for try := 0; try < task.MaxTries; try++ {
 					timeout, err := time.ParseDuration(w.Settings.Timeout)
 					if err != nil {
-						logger.Error("invalid timeout ", w.Settings.Timeout, zap.Error(err))
+						logger.Error("workflow execution failed: invalid timeout format", zap.String("timeout", w.Settings.Timeout), zap.Error(err))
 						break
 					}
 					ctx, cancel := context.WithTimeout(context.Background(), timeout)
@@ -231,12 +249,12 @@ func (w *Workflow) Run() error {
 					select {
 					case <-ctx.Done():
 						err = ctx.Err()
-						logger.Error("task timed out ", t.Name, zap.Error(err))
+						logger.Error("task execution failed: timeout reached", zap.String("task", t.Name), zap.Error(err))
 					case err = <-errChan:
 						if err != nil {
-							logger.Error("task failed ", t.Name, zap.Error(err))
+							logger.Error("task execution failed", zap.String("task", t.Name), zap.Error(err))
 						} else {
-							logger.Info("task succeeded ", t.Name)
+							logger.Info("task execution succeeded", zap.String("task", t.Name))
 						}
 					}
 
@@ -245,7 +263,7 @@ func (w *Workflow) Run() error {
 					}
 				}
 				if err != nil {
-					logger.Error("task reached max tries ", t.Name, zap.Error(err))
+					logger.Error("task execution failed: max retries reached", zap.String("task", t.Name), zap.Error(err))
 				}
 			}(task)
 		}
