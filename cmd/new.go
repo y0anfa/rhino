@@ -19,6 +19,7 @@ var newCmd = &cobra.Command{
 		task := models.NewTask("task1", "A new task", "shell", map[string]interface{}{"command": "echo", "args": []interface{}{"Hello world!"}})
 		workflow.SetTrigger(*trigger)
 		workflow.AddTask(*task)
+		workflow.Order = [][]string{{"task1"}}
 		if err := workflow.Save(); err != nil {
 			fmt.Fprintf(os.Stderr, "Error creating workflow: %v\n", err)
 			os.Exit(1)
