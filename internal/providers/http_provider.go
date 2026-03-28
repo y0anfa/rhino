@@ -64,11 +64,6 @@ func (p *HTTPProvider) Validate(args map[string]interface{}) error {
 }
 
 func (p *HTTPProvider) Run(args map[string]interface{}) error {
-	err := p.Validate(args)
-	if err != nil {
-		return err
-	}
-
 	method := strings.ToUpper(args["method"].(string))
 	reqURL := args["url"].(string)
 

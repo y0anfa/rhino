@@ -55,11 +55,6 @@ func (p *ShellProvider) Validate(args map[string]interface{}) error {
 
 // Run runs the provider with the given arguments.
 func (p *ShellProvider) Run(args map[string]interface{}) error {
-	err := p.Validate(args)
-	if err != nil {
-		return err
-	}
-
 	command := args["command"].(string)
 	argsSlice := make([]string, len(args["args"].([]interface{})))
 	for i, arg := range args["args"].([]interface{}) {
