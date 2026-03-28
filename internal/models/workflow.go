@@ -245,7 +245,8 @@ func (w *Workflow) Run() error {
 				defer wg.Done()
 				var err error
 				for try := 0; try < t.MaxTries; try++ {
-					timeout, err := time.ParseDuration(w.Settings.Timeout)
+					var timeout time.Duration
+					timeout, err = time.ParseDuration(w.Settings.Timeout)
 					if err != nil {
 						logger.Error("workflow execution failed: invalid timeout format", zap.String("timeout", w.Settings.Timeout), zap.Error(err))
 						break
