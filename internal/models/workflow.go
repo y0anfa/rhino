@@ -221,6 +221,8 @@ func LoadWorkflows() ([]Workflow, error) {
 func (w *Workflow) Run() error {
 	for _, group := range w.Order {
 		var wg sync.WaitGroup
+		var mu sync.Mutex
+		var errs []error
 
 		for _, taskName := range group {
 			task := w.GetTask(taskName)
@@ -265,11 +267,18 @@ func (w *Workflow) Run() error {
 				}
 				if err != nil {
 					logger.Error("task execution failed: max retries reached", zap.String("task", t.Name), zap.Error(err))
+					mu.Lock()
+					errs = append(errs, fmt.Errorf("task '%s' failed: %w", t.Name, err))
+					mu.Unlock()
 				}
 			}(task)
 		}
 
 		wg.Wait()
+
+		if len(errs) > 0 {
+			return fmt.Errorf("workflow '%s' failed: %v", w.Name, errs)
+		}
 	}
 
 	return nil
