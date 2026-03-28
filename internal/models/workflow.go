@@ -32,12 +32,7 @@ func NewWorkflow(name string, desc string) *Workflow {
 
 func DeleteWorkflow(name string) error {
 	dir := config.GetString("workflows-dir")
-	err := os.Remove(dir + "/" + name + ".yaml")
-	if err != nil {
-		return err
-	} else {
-		return nil
-	}
+	return os.Remove(filepath.Join(dir, name+".yaml"))
 }
 
 func (w *Workflow) Describe() string {
@@ -160,42 +155,39 @@ func (w *Workflow) Validate() error {
 
 func (w *Workflow) Save() error {
 	dir := config.GetString("workflows-dir")
+	path := filepath.Join(dir, w.Name+".yaml")
 
 	data, err := yaml.Marshal(w)
 	if err != nil {
 		return err
-	} else {
-		file, err := os.OpenFile(filepath.Clean(dir+"/"+w.Name+".yaml"), os.O_WRONLY|os.O_CREATE|os.O_TRUNC, 0644)
-		if err != nil {
-			return err
-		}
-		defer file.Close()
-		logger.Info("saving workflow to ", filepath.Clean(dir+"/"+w.Name+".yaml"))
-		_, err = file.Write(data)
-		if err != nil {
-			return err
-		} else {
-			return nil
-		}
 	}
+
+	file, err := os.OpenFile(path, os.O_WRONLY|os.O_CREATE|os.O_TRUNC, 0644)
+	if err != nil {
+		return err
+	}
+	defer file.Close()
+
+	logger.Info("saving workflow to ", path)
+	_, err = file.Write(data)
+	return err
 }
 
 func LoadWorkflow(name string) (Workflow, error) {
 	dir := config.GetString("workflows-dir")
+	path := filepath.Join(dir, name+".yaml")
 
-	file, err := os.ReadFile(filepath.Clean(dir + "/" + name + ".yaml"))
+	file, err := os.ReadFile(path)
 	if err != nil {
 		return Workflow{}, err
-	} else {
-		var workflow Workflow
-		err = yaml.Unmarshal(file, &workflow)
-		if err != nil {
-			logger.Error("error decoding workflow ", name, zap.Error(err))
-			return Workflow{}, err
-		} else {
-			return workflow, nil
-		}
 	}
+
+	var workflow Workflow
+	if err = yaml.Unmarshal(file, &workflow); err != nil {
+		logger.Error("error decoding workflow ", name, zap.Error(err))
+		return Workflow{}, err
+	}
+	return workflow, nil
 }
 
 func LoadWorkflows() ([]Workflow, error) {
