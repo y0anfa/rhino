@@ -1,29 +1,27 @@
-/*
-Copyright © 2023 NAME HERE <EMAIL ADDRESS>
-*/
 package cmd
 
 import (
+	"fmt"
+	"os"
+
 	"github.com/spf13/cobra"
 	"github.com/y0anfa/rhino/internal/models"
 )
 
-// runCmd represents the run command
 var runCmd = &cobra.Command{
 	Use:   "run",
-	Short: "A brief description of your command",
-	Long: `A longer description that spans multiple lines and likely contains examples
-and usage of using your command.`,
-	Args: cobra.ExactArgs(1),
+	Short: "Manually run a specific workflow",
+	Long:  `Load and execute a workflow by name. The workflow must exist in the configured workflows directory.`,
+	Args:  cobra.ExactArgs(1),
 	Run: func(cmd *cobra.Command, args []string) {
 		w, err := models.LoadWorkflow(args[0])
 		if err != nil {
-			panic(err)
-		} else {
-			err := w.Run()
-			if err != nil {
-				panic(err)
-			}
+			fmt.Fprintf(os.Stderr, "Error loading workflow: %v\n", err)
+			os.Exit(1)
+		}
+		if err := w.Run(); err != nil {
+			fmt.Fprintf(os.Stderr, "Error running workflow: %v\n", err)
+			os.Exit(1)
 		}
 	},
 }
