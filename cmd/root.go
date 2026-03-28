@@ -9,6 +9,7 @@ import (
 	"github.com/spf13/cobra"
 	"github.com/y0anfa/rhino/internal/config"
 	"github.com/y0anfa/rhino/internal/logger"
+	"go.uber.org/zap"
 )
 
 // rootCmd represents the base command when called without any subcommands
@@ -44,10 +45,10 @@ func initConfig() {
 	if config.ConfigFileExists() {
 		logger.Info("config file exists")
 	} else {
-		logger.Info("config file does not exist")
+		logger.Info("config file does not exist, creating default")
 		err := config.SaveDefaultConfig()
 		if err != nil {
-			logger.Fatal(err)
+			logger.Fatal("failed to save default config", zap.Error(err))
 		}
 	}
 }

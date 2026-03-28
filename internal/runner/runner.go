@@ -25,7 +25,7 @@ type CronRunner struct {
 }
 
 func (cr *CronRunner) Run(ctx context.Context) error {
-	logger.Info("starting cron runner for workflow ", cr.Workflow.Name)
+	logger.Info("starting cron runner", zap.String("workflow", cr.Workflow.Name))
 	cr.Scheduler = cron.New(cron.WithSeconds())
 	cr.Scheduler.AddFunc(cr.Workflow.Trigger.Schedule, func() {
 		cr.Workflow.Run()
@@ -35,7 +35,7 @@ func (cr *CronRunner) Run(ctx context.Context) error {
 }
 
 func (cr *CronRunner) Stop(ctx context.Context) error {
-	logger.Info("stopping cron runner for workflow ", cr.Workflow.Name)
+	logger.Info("stopping cron runner", zap.String("workflow", cr.Workflow.Name))
 	if cr.Scheduler != nil {
 		cr.Scheduler.Stop()
 	}
@@ -47,14 +47,14 @@ type WebhookRunner struct {
 }
 
 func (wr *WebhookRunner) Run(ctx context.Context) error {
-	logger.Info("registering webhook handler for workflow ", wr.Workflow.Name)
+	logger.Info("registering webhook handler", zap.String("workflow", wr.Workflow.Name))
 	// Register the workflow with the shared webhook server
 	RegisterWebhookWorkflow(wr.Workflow)
 	return nil
 }
 
 func (wr *WebhookRunner) Stop(ctx context.Context) error {
-	logger.Info("unregistering webhook handler for workflow ", wr.Workflow.Name)
+	logger.Info("unregistering webhook handler", zap.String("workflow", wr.Workflow.Name))
 	UnregisterWebhookWorkflow(wr.Workflow.Name)
 	return nil
 }
@@ -87,7 +87,7 @@ func RegisterWebhookWorkflow(workflow models.Workflow) {
 
 		// Start the server in a goroutine
 		go func() {
-			logger.Info("starting shared webhook server on port ", port)
+			logger.Info("starting shared webhook server", zap.Int("port", port))
 			if err := webhookServer.ListenAndServe(); err != nil && err != http.ErrServerClosed {
 				logger.Error("webhook server error", zap.Error(err))
 			}
@@ -97,7 +97,7 @@ func RegisterWebhookWorkflow(workflow models.Workflow) {
 	// Register the workflow
 	path := "/webhook/" + workflow.Name
 	webhookWorkflows[workflow.Name] = workflow
-	logger.Info("registered webhook for workflow ", workflow.Name, " at path ", path)
+	logger.Info("registered webhook", zap.String("workflow", workflow.Name), zap.String("path", path))
 }
 
 // UnregisterWebhookWorkflow unregisters a workflow from webhook triggers
@@ -106,7 +106,7 @@ func UnregisterWebhookWorkflow(workflowName string) {
 	defer webhookMutex.Unlock()
 
 	delete(webhookWorkflows, workflowName)
-	logger.Info("unregistered webhook for workflow ", workflowName)
+	logger.Info("unregistered webhook", zap.String("workflow", workflowName))
 }
 
 // webhookHandler handles all webhook requests
@@ -133,7 +133,7 @@ func webhookHandler(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	logger.Info("webhook triggered for workflow ", workflowName)
+	logger.Info("webhook triggered", zap.String("workflow", workflowName))
 
 	// Run workflow in a goroutine to avoid blocking the HTTP response
 	go func() {

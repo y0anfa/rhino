@@ -168,7 +168,7 @@ func (w *Workflow) Save() error {
 	}
 	defer file.Close()
 
-	logger.Info("saving workflow to ", path)
+	logger.Info("saving workflow", zap.String("path", path))
 	_, err = file.Write(data)
 	return err
 }
@@ -184,7 +184,7 @@ func LoadWorkflow(name string) (Workflow, error) {
 
 	var workflow Workflow
 	if err = yaml.Unmarshal(file, &workflow); err != nil {
-		logger.Error("error decoding workflow ", name, zap.Error(err))
+		logger.Error("error decoding workflow", zap.String("workflow", name), zap.Error(err))
 		return Workflow{}, err
 	}
 	return workflow, nil
@@ -203,7 +203,7 @@ func LoadWorkflows() ([]Workflow, error) {
 		}
 		err = workflow.Validate()
 		if err != nil {
-			logger.Fatal("workflow is invalid ", workflow.Name, zap.Error(err))
+			logger.Fatal("workflow is invalid", zap.String("workflow", workflow.Name), zap.Error(err))
 		}
 		workflows = append(workflows, workflow)
 	}

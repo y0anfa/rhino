@@ -13,6 +13,7 @@ import (
 	"github.com/y0anfa/rhino/internal/logger"
 	"github.com/y0anfa/rhino/internal/models"
 	"github.com/y0anfa/rhino/internal/runner"
+	"go.uber.org/zap"
 )
 
 // runnerCmd represents the runner command
@@ -24,44 +25,38 @@ var runnerCmd = &cobra.Command{
 - Start webhook server for workflows with webhook triggers
 - Monitor and execute workflows based on their triggers`,
 	Run: func(cmd *cobra.Command, args []string) {
-		logger.Info("starting runner...")
+		logger.Info("starting runner")
 
-		// Create runner manager
 		runnerManager := runner.NewRunnerManager()
 
-		// Load all workflows
 		workflows, err := models.LoadWorkflows()
 		if err != nil {
-			logger.Fatal("error while loading workflows: ", err)
+			logger.Fatal("failed to load workflows", zap.Error(err))
 		}
 
-		// Register runners for each workflow
 		for _, w := range workflows {
 			switch w.Trigger.Type {
 			case models.TriggerScheduled:
-				logger.Info("registering cron runner for workflow ", w.Name)
+				logger.Info("registering cron runner", zap.String("workflow", w.Name))
 				runnerManager.AddRunner(&runner.CronRunner{Workflow: w})
 			case models.TriggerWebhook:
-				logger.Info("registering webhook runner for workflow ", w.Name)
+				logger.Info("registering webhook runner", zap.String("workflow", w.Name))
 				runnerManager.AddRunner(&runner.WebhookRunner{Workflow: w})
 			default:
-				logger.Error("unknown trigger type for workflow ", w.Name, ": ", w.Trigger.Type)
+				logger.Error("unknown trigger type", zap.String("workflow", w.Name), zap.String("trigger", string(w.Trigger.Type)))
 			}
 		}
 
-		// Start all runners
 		ctx := context.Background()
 		runnerManager.Run(ctx)
 
-		logger.Info("runner started successfully. Press Ctrl+C to stop.")
+		logger.Info("runner started, press Ctrl+C to stop")
 
-		// Wait for interrupt signal
 		sigChan := make(chan os.Signal, 1)
 		signal.Notify(sigChan, os.Interrupt, syscall.SIGTERM)
 		<-sigChan
 
-		// Graceful shutdown
-		logger.Info("shutting down runner...")
+		logger.Info("shutting down runner")
 		runnerManager.Stop(ctx)
 		logger.Info("runner stopped")
 	},

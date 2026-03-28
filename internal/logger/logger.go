@@ -2,36 +2,32 @@ package logger
 
 import "go.uber.org/zap"
 
-var (
-	Logger *zap.Logger
-	Sugar  *zap.SugaredLogger
-)
+var Logger *zap.Logger
 
 func init() {
 	Logger, _ = zap.NewProduction()
-	Sugar = Logger.Sugar()
 }
 
 func Sync() {
 	Logger.Sync()
 }
 
-func Debug(fields ...interface{}) {
-	Sugar.Debug(fields...)
+func Debug(msg string, fields ...zap.Field) {
+	Logger.Debug(msg, fields...)
 }
 
-func Info(fields ...interface{}) {
-	Sugar.Info(fields...)
+func Info(msg string, fields ...zap.Field) {
+	Logger.Info(msg, fields...)
 }
 
-func Warn(fields ...interface{}) {
-	Sugar.Warn(fields...)
+func Warn(msg string, fields ...zap.Field) {
+	Logger.Warn(msg, fields...)
 }
 
-func Error(fields ...interface{}) {
-	Sugar.Error(fields...)
+func Error(msg string, fields ...zap.Field) {
+	Logger.Error(msg, fields...)
 }
 
-func Fatal(fields ...interface{}) {
-	Sugar.Fatal(fields...)
+func Fatal(msg string, fields ...zap.Field) {
+	Logger.Fatal(msg, fields...)
 }
