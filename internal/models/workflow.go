@@ -38,10 +38,28 @@ func DeleteWorkflow(name string) error {
 func (w *Workflow) Describe() string {
 	desc := "Workflow: " + w.Name + "\n"
 	desc += "Description: " + w.Description + "\n"
-	desc += "Trigger: " + w.Trigger.Name + "\n"
-	desc += "Tasks:\n"
+	desc += "\nSettings:\n"
+	desc += fmt.Sprintf("  Max Tries: %d\n", w.Settings.MaxTries)
+	desc += fmt.Sprintf("  Timeout: %s\n", w.Settings.Timeout)
+	desc += "\nTrigger:\n"
+	desc += fmt.Sprintf("  Name: %s\n", w.Trigger.Name)
+	desc += fmt.Sprintf("  Type: %s\n", w.Trigger.Type)
+	if w.Trigger.Schedule != "" {
+		desc += fmt.Sprintf("  Schedule: %s\n", w.Trigger.Schedule)
+	}
+	desc += "\nTasks:\n"
 	for _, t := range w.Tasks {
-		desc += "  - " + t.Name + "\n"
+		desc += fmt.Sprintf("  - %s (provider: %s)\n", t.Name, t.Provider)
+		if t.Description != "" {
+			desc += fmt.Sprintf("    Description: %s\n", t.Description)
+		}
+		for k, v := range t.Params {
+			desc += fmt.Sprintf("    %s: %v\n", k, v)
+		}
+	}
+	desc += "\nOrder:\n"
+	for i, group := range w.Order {
+		desc += fmt.Sprintf("  %d: %v\n", i+1, group)
 	}
 	return desc
 }

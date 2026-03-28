@@ -1,6 +1,3 @@
-/*
-Copyright © 2023 NAME HERE <EMAIL ADDRESS>
-*/
 package cmd
 
 import (
@@ -16,7 +13,6 @@ import (
 	"go.uber.org/zap"
 )
 
-// runnerCmd represents the runner command
 var runnerCmd = &cobra.Command{
 	Use:   "runner",
 	Short: "Start the workflow runner daemon",
