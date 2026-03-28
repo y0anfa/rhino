@@ -232,14 +232,13 @@ func (w *Workflow) Run() error {
 			go func(t *Task) {
 				defer wg.Done()
 				var err error
-				for try := 0; try < task.MaxTries; try++ {
+				for try := 0; try < t.MaxTries; try++ {
 					timeout, err := time.ParseDuration(w.Settings.Timeout)
 					if err != nil {
 						logger.Error("workflow execution failed: invalid timeout format", zap.String("timeout", w.Settings.Timeout), zap.Error(err))
 						break
 					}
 					ctx, cancel := context.WithTimeout(context.Background(), timeout)
-					defer cancel()
 
 					errChan := make(chan error, 1)
 					go func() {
@@ -257,6 +256,8 @@ func (w *Workflow) Run() error {
 							logger.Info("task execution succeeded", zap.String("task", t.Name))
 						}
 					}
+
+					cancel()
 
 					if err == nil {
 						break
