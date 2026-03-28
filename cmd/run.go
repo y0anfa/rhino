@@ -44,9 +44,15 @@ var runCmd = &cobra.Command{
 			return
 		}
 
-		if err := w.Run(); err != nil {
+		results, err := w.Run()
+		if err != nil {
 			fmt.Fprintf(os.Stderr, "Error running workflow: %v\n", err)
 			os.Exit(1)
+		}
+		for taskName, result := range results {
+			if result != nil && result.Output != "" {
+				fmt.Printf("[%s] %s", taskName, result.Output)
+			}
 		}
 	},
 }

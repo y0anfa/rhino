@@ -21,7 +21,7 @@ func TestNewTask(t *testing.T) {
 
 func TestTaskRun_UnknownProvider(t *testing.T) {
 	task := NewTask("t1", "test", "nonexistent", map[string]interface{}{"key": "val"})
-	err := task.Run()
+	_, err := task.Run()
 	if err == nil {
 		t.Error("expected error for unknown provider")
 	}

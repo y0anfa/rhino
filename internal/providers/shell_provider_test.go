@@ -112,8 +112,15 @@ func TestShellProvider_Run(t *testing.T) {
 		"command": "echo",
 		"args":    []interface{}{"hello"},
 	}
-	if err := p.Run(args); err != nil {
+	result, err := p.Run(args)
+	if err != nil {
 		t.Errorf("expected successful run, got error: %v", err)
+	}
+	if result == nil {
+		t.Fatal("expected non-nil result")
+	}
+	if !strings.Contains(result.Output, "hello") {
+		t.Errorf("expected output to contain 'hello', got: %s", result.Output)
 	}
 }
 
@@ -123,7 +130,8 @@ func TestShellProvider_Run_Failure(t *testing.T) {
 		"command": "false",
 		"args":    []interface{}{},
 	}
-	if err := p.Run(args); err == nil {
+	_, err := p.Run(args)
+	if err == nil {
 		t.Error("expected error from failing command")
 	}
 }

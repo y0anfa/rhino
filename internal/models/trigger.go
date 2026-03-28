@@ -21,6 +21,8 @@ func NewTrigger(name string, desc string, triggertype TriggerType, schedule stri
 		return &Trigger{Name: name, Description: desc, Type: triggertype}
 	case TriggerScheduled:
 		return &Trigger{Name: name, Description: desc, Type: triggertype, Schedule: schedule}
+	case TriggerWebhook:
+		return &Trigger{Name: name, Description: desc, Type: triggertype}
 	default:
 		return nil
 	}

@@ -44,7 +44,9 @@ var runnerCmd = &cobra.Command{
 		}
 
 		ctx := context.Background()
-		runnerManager.Run(ctx)
+		if err := runnerManager.Run(ctx); err != nil {
+			logger.Error("some runners failed to start", zap.Error(err))
+		}
 
 		logger.Info("runner started, press Ctrl+C to stop")
 
@@ -53,7 +55,9 @@ var runnerCmd = &cobra.Command{
 		<-sigChan
 
 		logger.Info("shutting down runner")
-		runnerManager.Stop(ctx)
+		if err := runnerManager.Stop(ctx); err != nil {
+			logger.Error("errors during shutdown", zap.Error(err))
+		}
 		logger.Info("runner stopped")
 	},
 }

@@ -4,7 +4,7 @@ import (
 	"strings"
 	"testing"
 
-	_ "github.com/y0anfa/rhino/internal/providers" // register providers
+	"github.com/y0anfa/rhino/internal/providers" // registers shell and http providers
 )
 
 func validWorkflow() *Workflow {
@@ -258,9 +258,45 @@ func TestDescribe(t *testing.T) {
 
 func TestRun_Success(t *testing.T) {
 	w := validWorkflow()
-	err := w.Run()
+	results, err := w.Run()
 	if err != nil {
 		t.Errorf("expected successful run, got error: %v", err)
+	}
+	if results == nil {
+		t.Error("expected non-nil results map")
+	}
+	if results["task1"] == nil {
+		t.Error("expected result for task1")
+	}
+}
+
+type panicProvider struct{}
+
+func (p *panicProvider) Name() string                              { return "panic" }
+func (p *panicProvider) Validate(args map[string]interface{}) error { return nil }
+func (p *panicProvider) Run(args map[string]interface{}) (*providers.TaskResult, error) {
+	panic("test panic")
+}
+
+func TestRun_PanicRecovery(t *testing.T) {
+	providers.Register(&panicProvider{})
+
+	w := NewWorkflow("panic-wf", "panic workflow")
+	w.Settings.Timeout = "2s"
+	w.SetTrigger(Trigger{Name: "t1", Type: TriggerManual})
+	w.AddTask(Task{
+		Name:     "panic-task",
+		Provider: "panic",
+		Params:   map[string]interface{}{"any": "value"},
+	})
+	w.Order = [][]string{{"panic-task"}}
+
+	_, err := w.Run()
+	if err == nil {
+		t.Error("expected error from panicking task")
+	}
+	if !strings.Contains(err.Error(), "panicked") {
+		t.Errorf("expected panic error message, got: %v", err)
 	}
 }
 
@@ -275,7 +311,7 @@ func TestRun_FailingTask(t *testing.T) {
 	})
 	w.Order = [][]string{{"fail-task"}}
 
-	err := w.Run()
+	_, err := w.Run()
 	if err == nil {
 		t.Error("expected error from failing task")
 	}

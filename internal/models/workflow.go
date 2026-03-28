@@ -228,7 +228,15 @@ func LoadWorkflows() ([]Workflow, error) {
 	return workflows, nil
 }
 
-func (w *Workflow) Run() error {
+type taskRunResult struct {
+	result *providers.TaskResult
+	err    error
+}
+
+func (w *Workflow) Run() (map[string]*providers.TaskResult, error) {
+	results := make(map[string]*providers.TaskResult)
+	var resultsMu sync.Mutex
+
 	for _, group := range w.Order {
 		var wg sync.WaitGroup
 		var mu sync.Mutex
@@ -243,43 +251,55 @@ func (w *Workflow) Run() error {
 
 			go func(t *Task) {
 				defer wg.Done()
-				var err error
+				timeout, parseErr := time.ParseDuration(w.Settings.Timeout)
+				if parseErr != nil {
+					logger.Error("workflow execution failed: invalid timeout format", zap.String("timeout", w.Settings.Timeout), zap.Error(parseErr))
+					mu.Lock()
+					errs = append(errs, fmt.Errorf("task '%s' failed: invalid timeout: %w", t.Name, parseErr))
+					mu.Unlock()
+					return
+				}
+				var lastErr error
 				for try := 0; try < t.MaxTries; try++ {
-					var timeout time.Duration
-					timeout, err = time.ParseDuration(w.Settings.Timeout)
-					if err != nil {
-						logger.Error("workflow execution failed: invalid timeout format", zap.String("timeout", w.Settings.Timeout), zap.Error(err))
-						break
-					}
 					ctx, cancel := context.WithTimeout(context.Background(), timeout)
 
-					errChan := make(chan error, 1)
+					ch := make(chan taskRunResult, 1)
 					go func() {
-						errChan <- t.Run()
+						defer func() {
+							if r := recover(); r != nil {
+								ch <- taskRunResult{err: fmt.Errorf("task '%s' panicked: %v", t.Name, r)}
+							}
+						}()
+						res, err := t.Run()
+						ch <- taskRunResult{result: res, err: err}
 					}()
 
 					select {
 					case <-ctx.Done():
-						err = ctx.Err()
-						logger.Error("task execution failed: timeout reached", zap.String("task", t.Name), zap.Error(err))
-					case err = <-errChan:
-						if err != nil {
-							logger.Error("task execution failed", zap.String("task", t.Name), zap.Error(err))
+						lastErr = ctx.Err()
+						logger.Error("task execution failed: timeout reached", zap.String("task", t.Name), zap.Error(lastErr))
+					case tr := <-ch:
+						lastErr = tr.err
+						if lastErr != nil {
+							logger.Error("task execution failed", zap.String("task", t.Name), zap.Error(lastErr))
 						} else {
 							logger.Info("task execution succeeded", zap.String("task", t.Name))
+							resultsMu.Lock()
+							results[t.Name] = tr.result
+							resultsMu.Unlock()
 						}
 					}
 
 					cancel()
 
-					if err == nil {
+					if lastErr == nil {
 						break
 					}
 				}
-				if err != nil {
-					logger.Error("task execution failed: max retries reached", zap.String("task", t.Name), zap.Error(err))
+				if lastErr != nil {
+					logger.Error("task execution failed: max retries reached", zap.String("task", t.Name), zap.Error(lastErr))
 					mu.Lock()
-					errs = append(errs, fmt.Errorf("task '%s' failed: %w", t.Name, err))
+					errs = append(errs, fmt.Errorf("task '%s' failed: %w", t.Name, lastErr))
 					mu.Unlock()
 				}
 			}(task)
@@ -288,9 +308,9 @@ func (w *Workflow) Run() error {
 		wg.Wait()
 
 		if len(errs) > 0 {
-			return fmt.Errorf("workflow '%s' failed: %v", w.Name, errs)
+			return results, fmt.Errorf("workflow '%s' failed: %v", w.Name, errs)
 		}
 	}
 
-	return nil
+	return results, nil
 }

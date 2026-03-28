@@ -6,6 +6,7 @@ It also registers itself with the Register function. It is a plugin that allows 
 package providers
 
 import (
+	"bytes"
 	"fmt"
 	"os"
 	"os/exec"
@@ -54,18 +55,22 @@ func (p *ShellProvider) Validate(args map[string]interface{}) error {
 }
 
 // Run runs the provider with the given arguments.
-func (p *ShellProvider) Run(args map[string]interface{}) error {
+func (p *ShellProvider) Run(args map[string]interface{}) (*TaskResult, error) {
 	command := args["command"].(string)
 	argsSlice := make([]string, len(args["args"].([]interface{})))
 	for i, arg := range args["args"].([]interface{}) {
 		argsSlice[i] = arg.(string)
 	}
 
+	var stdout bytes.Buffer
 	cmd := exec.Command(command, argsSlice...) // #nosec: G204
 	cmd.Stdin = os.Stdin
-	cmd.Stdout = os.Stdout
+	cmd.Stdout = &stdout
 	cmd.Stderr = os.Stderr
-	return cmd.Run()
+	if err := cmd.Run(); err != nil {
+		return nil, err
+	}
+	return &TaskResult{Output: stdout.String()}, nil
 }
 
 // Register registers the shell provider.

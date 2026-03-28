@@ -19,21 +19,18 @@ func NewTask(name, desc string, provider string, params map[string]interface{}) 
 	return &Task{Name: name, Description: desc, Provider: provider, Params: params}
 }
 
-func (t *Task) Run() error {
-	// Get the provider.
+func (t *Task) Run() (*providers.TaskResult, error) {
 	provider, err := providers.Get(t.Provider)
 	if err != nil {
-		return fmt.Errorf("task execution failed: unknown provider '%s': %w", t.Provider, err)
+		return nil, fmt.Errorf("task execution failed: unknown provider '%s': %w", t.Provider, err)
 	}
-	// Validate provider arguments before running
 	err = provider.Validate(t.Params)
 	if err != nil {
-		return fmt.Errorf("task execution failed: validation failed for task '%s': %w", t.Name, err)
+		return nil, fmt.Errorf("task execution failed: validation failed for task '%s': %w", t.Name, err)
 	}
-	// Run the provider.
-	err = provider.Run(t.Params)
+	result, err := provider.Run(t.Params)
 	if err != nil {
-		return fmt.Errorf("task execution failed: provider '%s' failed for task '%s': %w", t.Provider, t.Name, err)
+		return nil, fmt.Errorf("task execution failed: provider '%s' failed for task '%s': %w", t.Provider, t.Name, err)
 	}
-	return nil
+	return result, nil
 }

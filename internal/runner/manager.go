@@ -1,6 +1,9 @@
 package runner
 
-import "context"
+import (
+	"context"
+	"errors"
+)
 
 type RunnerManager struct {
 	Runners []Runner
@@ -14,16 +17,25 @@ func (rm *RunnerManager) AddRunner(r Runner) {
 	rm.Runners = append(rm.Runners, r)
 }
 
-func (rm *RunnerManager) Run(ctx context.Context) {
+func (rm *RunnerManager) Run(ctx context.Context) error {
+	var errs []error
 	for _, r := range rm.Runners {
-		r.Run(ctx)
+		if err := r.Run(ctx); err != nil {
+			errs = append(errs, err)
+		}
 	}
+	return errors.Join(errs...)
 }
 
-func (rm *RunnerManager) Stop(ctx context.Context) {
+func (rm *RunnerManager) Stop(ctx context.Context) error {
+	var errs []error
 	for _, r := range rm.Runners {
-		r.Stop(ctx)
+		if err := r.Stop(ctx); err != nil {
+			errs = append(errs, err)
+		}
 	}
-	// Stop the shared webhook server if it's running
-	StopWebhookServer(ctx)
+	if err := StopWebhookServer(ctx); err != nil {
+		errs = append(errs, err)
+	}
+	return errors.Join(errs...)
 }

@@ -23,7 +23,7 @@ func TestIntegration_SequentialExecution(t *testing.T) {
 	})
 	w.Order = [][]string{{"step1"}, {"step2"}}
 
-	if err := w.Run(); err != nil {
+	if _, err := w.Run(); err != nil {
 		t.Errorf("expected successful sequential run, got error: %v", err)
 	}
 }
@@ -44,7 +44,7 @@ func TestIntegration_ParallelExecution(t *testing.T) {
 	})
 	w.Order = [][]string{{"taskA", "taskB"}}
 
-	if err := w.Run(); err != nil {
+	if _, err := w.Run(); err != nil {
 		t.Errorf("expected successful parallel run, got error: %v", err)
 	}
 }
@@ -63,7 +63,7 @@ func TestIntegration_RetryThenSucceed(t *testing.T) {
 	})
 	w.Order = [][]string{{"fail-task"}}
 
-	err := w.Run()
+	_, err := w.Run()
 	if err == nil {
 		t.Error("expected error after exhausting retries")
 	}
@@ -84,7 +84,7 @@ func TestIntegration_Timeout(t *testing.T) {
 	})
 	w.Order = [][]string{{"slow-task"}}
 
-	err := w.Run()
+	_, err := w.Run()
 	if err == nil {
 		t.Error("expected timeout error")
 	}
@@ -113,7 +113,7 @@ func TestIntegration_MixedGroups(t *testing.T) {
 	})
 	w.Order = [][]string{{"par1", "par2"}, {"final"}}
 
-	if err := w.Run(); err != nil {
+	if _, err := w.Run(); err != nil {
 		t.Errorf("expected successful mixed run, got error: %v", err)
 	}
 }
@@ -136,7 +136,7 @@ func TestIntegration_FailureStopsSubsequentGroups(t *testing.T) {
 	})
 	w.Order = [][]string{{"fail-first"}, {"never-runs"}}
 
-	err := w.Run()
+	_, err := w.Run()
 	if err == nil {
 		t.Error("expected error from first group failure")
 	}

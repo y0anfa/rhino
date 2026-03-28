@@ -28,7 +28,9 @@ func (cr *CronRunner) Run(ctx context.Context) error {
 	logger.Info("starting cron runner", zap.String("workflow", cr.Workflow.Name))
 	cr.Scheduler = cron.New(cron.WithSeconds())
 	cr.Scheduler.AddFunc(cr.Workflow.Trigger.Schedule, func() {
-		cr.Workflow.Run()
+		if _, err := cr.Workflow.Run(); err != nil {
+			logger.Error("workflow execution failed", zap.String("workflow", cr.Workflow.Name), zap.Error(err))
+		}
 	})
 	cr.Scheduler.Start()
 	return nil
@@ -135,9 +137,8 @@ func webhookHandler(w http.ResponseWriter, r *http.Request) {
 
 	logger.Info("webhook triggered", zap.String("workflow", workflowName))
 
-	// Run workflow in a goroutine to avoid blocking the HTTP response
 	go func() {
-		if err := workflow.Run(); err != nil {
+		if _, err := workflow.Run(); err != nil {
 			logger.Error("workflow execution failed", zap.String("workflow", workflowName), zap.Error(err))
 		}
 	}()

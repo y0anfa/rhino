@@ -12,8 +12,8 @@ type Provider interface {
 	Name() string
 	// Validate validates the provider arguments.
 	Validate(args map[string]interface{}) error
-	// Run runs the provider with the given arguments.
-	Run(args map[string]interface{}) error
+	// Run runs the provider with the given arguments and returns the result.
+	Run(args map[string]interface{}) (*TaskResult, error)
 }
 
 // Create a map of providers.

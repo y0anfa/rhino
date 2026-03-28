@@ -142,6 +142,7 @@ func TestHTTPProvider_Run_GET(t *testing.T) {
 			t.Errorf("expected GET, got %s", r.Method)
 		}
 		w.WriteHeader(http.StatusOK)
+		w.Write([]byte("ok"))
 	}))
 	defer server.Close()
 
@@ -150,8 +151,15 @@ func TestHTTPProvider_Run_GET(t *testing.T) {
 		"method": "GET",
 		"url":    server.URL,
 	}
-	if err := p.Run(args); err != nil {
+	result, err := p.Run(args)
+	if err != nil {
 		t.Errorf("expected successful run, got error: %v", err)
+	}
+	if result == nil || result.Output != "ok" {
+		t.Errorf("expected output='ok', got: %v", result)
+	}
+	if result.Metadata["status_code"] != "200" {
+		t.Errorf("expected status_code=200, got: %s", result.Metadata["status_code"])
 	}
 }
 
@@ -164,6 +172,7 @@ func TestHTTPProvider_Run_POST_WithBody(t *testing.T) {
 			t.Errorf("expected Content-Type=application/json, got %s", r.Header.Get("Content-Type"))
 		}
 		w.WriteHeader(http.StatusCreated)
+		w.Write([]byte(`{"id":1}`))
 	}))
 	defer server.Close()
 
@@ -174,8 +183,12 @@ func TestHTTPProvider_Run_POST_WithBody(t *testing.T) {
 		"body":    `{"key":"value"}`,
 		"headers": map[string]interface{}{"Content-Type": "application/json"},
 	}
-	if err := p.Run(args); err != nil {
+	result, err := p.Run(args)
+	if err != nil {
 		t.Errorf("expected successful run, got error: %v", err)
+	}
+	if result == nil || result.Output != `{"id":1}` {
+		t.Errorf("expected response body in output, got: %v", result)
 	}
 }
 
@@ -190,8 +203,43 @@ func TestHTTPProvider_Run_NoBody(t *testing.T) {
 		"method": "GET",
 		"url":    server.URL,
 	}
-	if err := p.Run(args); err != nil {
+	_, err := p.Run(args)
+	if err != nil {
 		t.Errorf("expected successful run without body, got error: %v", err)
+	}
+}
+
+func TestHTTPProvider_Run_4xx(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusNotFound)
+	}))
+	defer server.Close()
+
+	p := &HTTPProvider{}
+	args := map[string]interface{}{
+		"method": "GET",
+		"url":    server.URL,
+	}
+	_, err := p.Run(args)
+	if err == nil || !strings.Contains(err.Error(), "status 404") {
+		t.Errorf("expected 404 error, got: %v", err)
+	}
+}
+
+func TestHTTPProvider_Run_5xx(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusInternalServerError)
+	}))
+	defer server.Close()
+
+	p := &HTTPProvider{}
+	args := map[string]interface{}{
+		"method": "GET",
+		"url":    server.URL,
+	}
+	_, err := p.Run(args)
+	if err == nil || !strings.Contains(err.Error(), "status 500") {
+		t.Errorf("expected 500 error, got: %v", err)
 	}
 }
 

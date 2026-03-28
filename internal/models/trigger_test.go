@@ -37,7 +37,13 @@ func TestNewTrigger_UnknownType(t *testing.T) {
 
 func TestNewTrigger_Webhook(t *testing.T) {
 	trigger := NewTrigger("t1", "webhook trigger", TriggerWebhook, "")
-	if trigger != nil {
-		t.Error("expected nil trigger for webhook type (not handled in constructor)")
+	if trigger == nil {
+		t.Fatal("expected non-nil trigger for webhook type")
+	}
+	if trigger.Type != TriggerWebhook {
+		t.Errorf("expected type=%s, got %s", TriggerWebhook, trigger.Type)
+	}
+	if trigger.Schedule != "" {
+		t.Errorf("expected empty schedule for webhook trigger, got %s", trigger.Schedule)
 	}
 }
