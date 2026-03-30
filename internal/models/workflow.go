@@ -219,9 +219,8 @@ func LoadWorkflows() ([]Workflow, error) {
 		if err != nil {
 			return nil, err
 		}
-		err = workflow.Validate()
-		if err != nil {
-			logger.Fatal("workflow is invalid", zap.String("workflow", workflow.Name), zap.Error(err))
+		if err = workflow.Validate(); err != nil {
+			return nil, fmt.Errorf("workflow '%s' is invalid: %w", workflow.Name, err)
 		}
 		workflows = append(workflows, workflow)
 	}
@@ -233,11 +232,20 @@ type taskRunResult struct {
 	err    error
 }
 
-func (w *Workflow) Run() (map[string]*providers.TaskResult, error) {
+func (w *Workflow) Run(ctx context.Context) (map[string]*providers.TaskResult, error) {
 	results := make(map[string]*providers.TaskResult)
 	var resultsMu sync.Mutex
 
+	timeout, parseErr := time.ParseDuration(w.Settings.Timeout)
+	if parseErr != nil {
+		return nil, fmt.Errorf("workflow '%s' failed: invalid timeout format '%s': %w", w.Name, w.Settings.Timeout, parseErr)
+	}
+
 	for _, group := range w.Order {
+		if err := ctx.Err(); err != nil {
+			return results, fmt.Errorf("workflow '%s' cancelled: %w", w.Name, err)
+		}
+
 		var wg sync.WaitGroup
 		var mu sync.Mutex
 		var errs []error
@@ -251,17 +259,9 @@ func (w *Workflow) Run() (map[string]*providers.TaskResult, error) {
 
 			go func(t *Task) {
 				defer wg.Done()
-				timeout, parseErr := time.ParseDuration(w.Settings.Timeout)
-				if parseErr != nil {
-					logger.Error("workflow execution failed: invalid timeout format", zap.String("timeout", w.Settings.Timeout), zap.Error(parseErr))
-					mu.Lock()
-					errs = append(errs, fmt.Errorf("task '%s' failed: invalid timeout: %w", t.Name, parseErr))
-					mu.Unlock()
-					return
-				}
 				var lastErr error
 				for try := 0; try < t.MaxTries; try++ {
-					ctx, cancel := context.WithTimeout(context.Background(), timeout)
+					taskCtx, cancel := context.WithTimeout(ctx, timeout)
 
 					ch := make(chan taskRunResult, 1)
 					go func() {
@@ -275,8 +275,8 @@ func (w *Workflow) Run() (map[string]*providers.TaskResult, error) {
 					}()
 
 					select {
-					case <-ctx.Done():
-						lastErr = ctx.Err()
+					case <-taskCtx.Done():
+						lastErr = taskCtx.Err()
 						logger.Error("task execution failed: timeout reached", zap.String("task", t.Name), zap.Error(lastErr))
 					case tr := <-ch:
 						lastErr = tr.err

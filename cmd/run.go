@@ -1,6 +1,7 @@
 package cmd
 
 import (
+	"context"
 	"fmt"
 	"os"
 	"strings"
@@ -44,7 +45,7 @@ var runCmd = &cobra.Command{
 			return
 		}
 
-		results, err := w.Run()
+		results, err := w.Run(context.Background())
 		if err != nil {
 			fmt.Fprintf(os.Stderr, "Error running workflow: %v\n", err)
 			os.Exit(1)

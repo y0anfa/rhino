@@ -1,6 +1,7 @@
 package models
 
 import (
+	"context"
 	"strings"
 	"testing"
 
@@ -23,7 +24,7 @@ func TestIntegration_SequentialExecution(t *testing.T) {
 	})
 	w.Order = [][]string{{"step1"}, {"step2"}}
 
-	if _, err := w.Run(); err != nil {
+	if _, err := w.Run(context.Background()); err != nil {
 		t.Errorf("expected successful sequential run, got error: %v", err)
 	}
 }
@@ -44,7 +45,7 @@ func TestIntegration_ParallelExecution(t *testing.T) {
 	})
 	w.Order = [][]string{{"taskA", "taskB"}}
 
-	if _, err := w.Run(); err != nil {
+	if _, err := w.Run(context.Background()); err != nil {
 		t.Errorf("expected successful parallel run, got error: %v", err)
 	}
 }
@@ -63,7 +64,7 @@ func TestIntegration_RetryThenSucceed(t *testing.T) {
 	})
 	w.Order = [][]string{{"fail-task"}}
 
-	_, err := w.Run()
+	_, err := w.Run(context.Background())
 	if err == nil {
 		t.Error("expected error after exhausting retries")
 	}
@@ -84,7 +85,7 @@ func TestIntegration_Timeout(t *testing.T) {
 	})
 	w.Order = [][]string{{"slow-task"}}
 
-	_, err := w.Run()
+	_, err := w.Run(context.Background())
 	if err == nil {
 		t.Error("expected timeout error")
 	}
@@ -113,7 +114,7 @@ func TestIntegration_MixedGroups(t *testing.T) {
 	})
 	w.Order = [][]string{{"par1", "par2"}, {"final"}}
 
-	if _, err := w.Run(); err != nil {
+	if _, err := w.Run(context.Background()); err != nil {
 		t.Errorf("expected successful mixed run, got error: %v", err)
 	}
 }
@@ -136,7 +137,7 @@ func TestIntegration_FailureStopsSubsequentGroups(t *testing.T) {
 	})
 	w.Order = [][]string{{"fail-first"}, {"never-runs"}}
 
-	_, err := w.Run()
+	_, err := w.Run(context.Background())
 	if err == nil {
 		t.Error("expected error from first group failure")
 	}

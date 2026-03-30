@@ -5,6 +5,7 @@ import (
 	"os"
 	"os/signal"
 	"syscall"
+	"time"
 
 	"github.com/spf13/cobra"
 	"github.com/y0anfa/rhino/internal/logger"
@@ -12,6 +13,8 @@ import (
 	"github.com/y0anfa/rhino/internal/runner"
 	"go.uber.org/zap"
 )
+
+const shutdownTimeout = 30 * time.Second
 
 var runnerCmd = &cobra.Command{
 	Use:   "runner",
@@ -55,7 +58,9 @@ var runnerCmd = &cobra.Command{
 		<-sigChan
 
 		logger.Info("shutting down runner")
-		if err := runnerManager.Stop(ctx); err != nil {
+		shutdownCtx, shutdownCancel := context.WithTimeout(context.Background(), shutdownTimeout)
+		defer shutdownCancel()
+		if err := runnerManager.Stop(shutdownCtx); err != nil {
 			logger.Error("errors during shutdown", zap.Error(err))
 		}
 		logger.Info("runner stopped")

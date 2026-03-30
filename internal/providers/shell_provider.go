@@ -8,7 +8,6 @@ package providers
 import (
 	"bytes"
 	"fmt"
-	"os"
 	"os/exec"
 )
 
@@ -63,10 +62,10 @@ func (p *ShellProvider) Run(args map[string]interface{}) (*TaskResult, error) {
 	}
 
 	var stdout bytes.Buffer
+	var stderr bytes.Buffer
 	cmd := exec.Command(command, argsSlice...) // #nosec: G204
-	cmd.Stdin = os.Stdin
 	cmd.Stdout = &stdout
-	cmd.Stderr = os.Stderr
+	cmd.Stderr = &stderr
 	if err := cmd.Run(); err != nil {
 		return nil, err
 	}

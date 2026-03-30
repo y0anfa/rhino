@@ -1,6 +1,7 @@
 package models
 
 import (
+	"context"
 	"strings"
 	"testing"
 
@@ -258,7 +259,7 @@ func TestDescribe(t *testing.T) {
 
 func TestRun_Success(t *testing.T) {
 	w := validWorkflow()
-	results, err := w.Run()
+	results, err := w.Run(context.Background())
 	if err != nil {
 		t.Errorf("expected successful run, got error: %v", err)
 	}
@@ -291,7 +292,7 @@ func TestRun_PanicRecovery(t *testing.T) {
 	})
 	w.Order = [][]string{{"panic-task"}}
 
-	_, err := w.Run()
+	_, err := w.Run(context.Background())
 	if err == nil {
 		t.Error("expected error from panicking task")
 	}
@@ -311,7 +312,7 @@ func TestRun_FailingTask(t *testing.T) {
 	})
 	w.Order = [][]string{{"fail-task"}}
 
-	_, err := w.Run()
+	_, err := w.Run(context.Background())
 	if err == nil {
 		t.Error("expected error from failing task")
 	}
