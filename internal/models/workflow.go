@@ -15,6 +15,7 @@ import (
 	"github.com/y0anfa/rhino/internal/config"
 	"github.com/y0anfa/rhino/internal/logger"
 	"github.com/y0anfa/rhino/internal/providers"
+	"github.com/y0anfa/rhino/internal/template"
 	"go.uber.org/zap"
 	"gopkg.in/yaml.v3"
 )
@@ -309,6 +310,7 @@ func (w *Workflow) Run(ctx context.Context) (map[string]*providers.TaskResult, e
 	var resultsMu sync.Mutex
 	taskStatuses := make(map[string]string)
 	var statusMu sync.Mutex
+	tmplCtx := template.NewContext(w.Name, w.Description, w.Trigger.Name, string(w.Trigger.Type))
 
 	for _, group := range w.Order {
 		if err := ctx.Err(); err != nil {
@@ -346,6 +348,10 @@ func (w *Workflow) Run(ctx context.Context) (map[string]*providers.TaskResult, e
 
 			go func(t *Task, timeout time.Duration) {
 				defer wg.Done()
+
+				// Resolve template expressions in params
+				resolvedParams := template.ResolveParams(t.Params, tmplCtx)
+
 				var lastErr error
 				for try := 0; try < t.MaxTries; try++ {
 					if try > 0 {
@@ -369,7 +375,7 @@ func (w *Workflow) Run(ctx context.Context) (map[string]*providers.TaskResult, e
 								ch <- taskRunResult{err: fmt.Errorf("task '%s' panicked: %v", t.Name, r)}
 							}
 						}()
-						res, err := t.Run()
+						res, err := t.RunWithParams(resolvedParams)
 						ch <- taskRunResult{result: res, err: err}
 					}()
 
@@ -385,6 +391,7 @@ func (w *Workflow) Run(ctx context.Context) (map[string]*providers.TaskResult, e
 							logger.Info("task execution succeeded", zap.String("task", t.Name))
 							resultsMu.Lock()
 							results[t.Name] = tr.result
+							tmplCtx.SetTaskResult(t.Name, tr.result)
 							resultsMu.Unlock()
 						}
 					}
