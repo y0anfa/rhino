@@ -3,6 +3,8 @@ package models
 import (
 	"context"
 	"fmt"
+	"math"
+	"math/rand"
 	"os"
 	"path/filepath"
 	"strings"
@@ -232,14 +234,81 @@ type taskRunResult struct {
 	err    error
 }
 
+func (w *Workflow) resolveTimeout(t *Task) (time.Duration, error) {
+	timeoutStr := w.Settings.Timeout
+	if t.Timeout != "" {
+		timeoutStr = t.Timeout
+	}
+	return time.ParseDuration(timeoutStr)
+}
+
+func (w *Workflow) retryDelay(attempt int) time.Duration {
+	backoff := w.Settings.RetryBackoff
+	if backoff == "" || backoff == "none" {
+		return 0
+	}
+
+	baseDelay, err := time.ParseDuration(w.Settings.RetryBaseDelay)
+	if err != nil {
+		baseDelay = time.Second
+	}
+	maxDelay, err := time.ParseDuration(w.Settings.RetryMaxDelay)
+	if err != nil {
+		maxDelay = time.Minute
+	}
+
+	var delay time.Duration
+	switch backoff {
+	case "linear":
+		delay = baseDelay * time.Duration(attempt+1)
+	case "exponential":
+		delay = baseDelay * time.Duration(math.Pow(2, float64(attempt)))
+	default:
+		return 0
+	}
+
+	// Add jitter: 0-25% of computed delay
+	jitter := time.Duration(rand.Int63n(int64(delay/4) + 1))
+	delay += jitter
+
+	if delay > maxDelay {
+		delay = maxDelay
+	}
+	return delay
+}
+
+func (w *Workflow) evaluateCondition(t *Task, taskStatuses map[string]string) bool {
+	cond := strings.TrimSpace(t.Condition)
+	if cond == "" {
+		return true
+	}
+	if cond == "always" {
+		return true
+	}
+	if cond == "never" {
+		return false
+	}
+
+	// Parse "{{task.TASKNAME.status}} == success|failed"
+	if strings.Contains(cond, ".status}}") {
+		for name, status := range taskStatuses {
+			placeholder := fmt.Sprintf("{{task.%s.status}}", name)
+			cond = strings.ReplaceAll(cond, placeholder, status)
+		}
+		parts := strings.SplitN(cond, "==", 2)
+		if len(parts) == 2 {
+			return strings.TrimSpace(parts[0]) == strings.TrimSpace(parts[1])
+		}
+	}
+
+	return true
+}
+
 func (w *Workflow) Run(ctx context.Context) (map[string]*providers.TaskResult, error) {
 	results := make(map[string]*providers.TaskResult)
 	var resultsMu sync.Mutex
-
-	timeout, parseErr := time.ParseDuration(w.Settings.Timeout)
-	if parseErr != nil {
-		return nil, fmt.Errorf("workflow '%s' failed: invalid timeout format '%s': %w", w.Name, w.Settings.Timeout, parseErr)
-	}
+	taskStatuses := make(map[string]string)
+	var statusMu sync.Mutex
 
 	for _, group := range w.Order {
 		if err := ctx.Err(); err != nil {
@@ -255,12 +324,42 @@ func (w *Workflow) Run(ctx context.Context) (map[string]*providers.TaskResult, e
 			if task.MaxTries == 0 {
 				task.MaxTries = w.Settings.MaxTries
 			}
+
+			// Evaluate condition
+			statusMu.Lock()
+			shouldRun := w.evaluateCondition(task, taskStatuses)
+			statusMu.Unlock()
+			if !shouldRun {
+				logger.Info("task skipped: condition not met", zap.String("task", task.Name))
+				statusMu.Lock()
+				taskStatuses[task.Name] = "skipped"
+				statusMu.Unlock()
+				continue
+			}
+
+			timeout, parseErr := w.resolveTimeout(task)
+			if parseErr != nil {
+				return results, fmt.Errorf("workflow '%s' failed: invalid timeout for task '%s': %w", w.Name, task.Name, parseErr)
+			}
+
 			wg.Add(1)
 
-			go func(t *Task) {
+			go func(t *Task, timeout time.Duration) {
 				defer wg.Done()
 				var lastErr error
 				for try := 0; try < t.MaxTries; try++ {
+					if try > 0 {
+						delay := w.retryDelay(try - 1)
+						if delay > 0 {
+							select {
+							case <-ctx.Done():
+								lastErr = ctx.Err()
+								break
+							case <-time.After(delay):
+							}
+						}
+					}
+
 					taskCtx, cancel := context.WithTimeout(ctx, timeout)
 
 					ch := make(chan taskRunResult, 1)
@@ -296,13 +395,24 @@ func (w *Workflow) Run(ctx context.Context) (map[string]*providers.TaskResult, e
 						break
 					}
 				}
+
+				statusMu.Lock()
+				if lastErr != nil {
+					taskStatuses[t.Name] = "failed"
+				} else {
+					taskStatuses[t.Name] = "success"
+				}
+				statusMu.Unlock()
+
 				if lastErr != nil {
 					logger.Error("task execution failed: max retries reached", zap.String("task", t.Name), zap.Error(lastErr))
-					mu.Lock()
-					errs = append(errs, fmt.Errorf("task '%s' failed: %w", t.Name, lastErr))
-					mu.Unlock()
+					if !t.ContinueOnError {
+						mu.Lock()
+						errs = append(errs, fmt.Errorf("task '%s' failed: %w", t.Name, lastErr))
+						mu.Unlock()
+					}
 				}
-			}(task)
+			}(task, timeout)
 		}
 
 		wg.Wait()

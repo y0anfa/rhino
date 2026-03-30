@@ -7,11 +7,15 @@ import (
 )
 
 type Task struct {
-	Description string                 `yaml:"description"`
-	Name        string                 `yaml:"name"`
-	MaxTries    int                    `yaml:"max-tries"`
-	Provider    string                 `yaml:"provider"`
-	Params      map[string]interface{} `yaml:"params"`
+	Description     string                 `yaml:"description"`
+	Name            string                 `yaml:"name"`
+	MaxTries        int                    `yaml:"max-tries"`
+	Timeout         string                 `yaml:"timeout,omitempty"`
+	Provider        string                 `yaml:"provider"`
+	Params          map[string]interface{} `yaml:"params"`
+	Condition       string                 `yaml:"condition,omitempty"`
+	OnFailure       string                 `yaml:"on-failure,omitempty"`
+	ContinueOnError bool                   `yaml:"continue-on-error,omitempty"`
 }
 
 func NewTask(name, desc string, provider string, params map[string]interface{}) *Task {
