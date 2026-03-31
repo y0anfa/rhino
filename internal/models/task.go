@@ -17,6 +17,7 @@ type Task struct {
 	Condition       string                 `yaml:"condition,omitempty"`
 	OnFailure       string                 `yaml:"on-failure,omitempty"`
 	ContinueOnError bool                   `yaml:"continue-on-error,omitempty"`
+	DependsOn       []string               `yaml:"depends-on,omitempty"`
 }
 
 func NewTask(name, desc string, provider string, params map[string]interface{}) *Task {

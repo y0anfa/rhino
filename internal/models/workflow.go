@@ -160,21 +160,110 @@ func (w *Workflow) Validate() error {
 			return fmt.Errorf("workflow validation failed: task '%s' validation failed: %w", t.Name, err)
 		}
 	}
-	if len(w.Order) == 0 {
-		return fmt.Errorf("workflow validation failed: order is empty")
-	}
-	for _, group := range w.Order {
-		if len(group) == 0 {
-			return fmt.Errorf("workflow validation failed: order group is empty")
+	// Check if using depends-on DAG mode
+	useDAG := false
+	for _, t := range w.Tasks {
+		if len(t.DependsOn) > 0 {
+			useDAG = true
+			break
 		}
-		for _, taskName := range group {
-			task := w.GetTask(taskName)
-			if task == nil {
-				return fmt.Errorf("workflow validation failed: task '%s' not found in order", taskName)
+	}
+
+	if useDAG {
+		// Validate depends-on references and detect cycles
+		order, err := w.buildDAGOrder()
+		if err != nil {
+			return fmt.Errorf("workflow validation failed: %w", err)
+		}
+		w.Order = order
+	} else {
+		if len(w.Order) == 0 {
+			return fmt.Errorf("workflow validation failed: order is empty")
+		}
+		for _, group := range w.Order {
+			if len(group) == 0 {
+				return fmt.Errorf("workflow validation failed: order group is empty")
+			}
+			for _, taskName := range group {
+				task := w.GetTask(taskName)
+				if task == nil {
+					return fmt.Errorf("workflow validation failed: task '%s' not found in order", taskName)
+				}
 			}
 		}
 	}
 	return nil
+}
+
+func (w *Workflow) buildDAGOrder() ([][]string, error) {
+	// Build adjacency: task -> tasks it depends on
+	taskNames := make(map[string]bool)
+	deps := make(map[string][]string)
+	for _, t := range w.Tasks {
+		taskNames[t.Name] = true
+		deps[t.Name] = t.DependsOn
+	}
+
+	// Validate references
+	for name, depList := range deps {
+		for _, dep := range depList {
+			if !taskNames[dep] {
+				return nil, fmt.Errorf("task '%s' depends on unknown task '%s'", name, dep)
+			}
+			if dep == name {
+				return nil, fmt.Errorf("task '%s' depends on itself", name)
+			}
+		}
+	}
+
+	// Topological sort (Kahn's algorithm) into groups
+	inDegree := make(map[string]int)
+	for name := range taskNames {
+		inDegree[name] = 0
+	}
+	for _, depList := range deps {
+		for _, dep := range depList {
+			_ = dep // inDegree counts how many tasks depend on this one
+		}
+	}
+	// Actually: inDegree[X] = number of dependencies X has
+	for name, depList := range deps {
+		inDegree[name] = len(depList)
+	}
+
+	var order [][]string
+	resolved := make(map[string]bool)
+
+	for len(resolved) < len(taskNames) {
+		// Find all tasks with no unresolved dependencies
+		var group []string
+		for name := range taskNames {
+			if resolved[name] {
+				continue
+			}
+			allResolved := true
+			for _, dep := range deps[name] {
+				if !resolved[dep] {
+					allResolved = false
+					break
+				}
+			}
+			if allResolved {
+				group = append(group, name)
+			}
+		}
+
+		if len(group) == 0 {
+			return nil, fmt.Errorf("circular dependency detected")
+		}
+
+		order = append(order, group)
+		for _, name := range group {
+			resolved[name] = true
+		}
+	}
+
+	return order, nil
 }
 
 func (w *Workflow) Save() error {
