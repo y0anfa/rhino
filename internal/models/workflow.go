@@ -11,10 +11,13 @@ import (
 	"sync"
 	"time"
 
+	"crypto/sha256"
+
 	"github.com/robfig/cron/v3"
 	"github.com/y0anfa/rhino/internal/config"
 	"github.com/y0anfa/rhino/internal/logger"
 	"github.com/y0anfa/rhino/internal/providers"
+	"github.com/y0anfa/rhino/internal/store"
 	"github.com/y0anfa/rhino/internal/template"
 	"go.uber.org/zap"
 	"gopkg.in/yaml.v3"
@@ -325,9 +328,46 @@ func (w *Workflow) Run(ctx context.Context) (map[string]*providers.TaskResult, e
 	var statusMu sync.Mutex
 	tmplCtx := template.NewContext(w.Name, w.Description, w.Trigger.Name, string(w.Trigger.Type))
 
+	// Record run in history store
+	var runRecord *store.WorkflowRun
+	if s := store.Global(); s != nil {
+		yamlBytes, _ := yaml.Marshal(w)
+		hash := fmt.Sprintf("%x", sha256.Sum256(yamlBytes))
+		runRecord = &store.WorkflowRun{
+			ID:           store.NewID(),
+			WorkflowName: w.Name,
+			WorkflowHash: hash[:16],
+			WorkflowYAML: string(yamlBytes),
+			Status:       store.RunStatusRunning,
+			TriggerType:  string(w.Trigger.Type),
+			StartedAt:    time.Now(),
+		}
+		if err := s.SaveRun(runRecord); err != nil {
+			logger.Error("failed to save run record", zap.Error(err))
+		}
+	}
+
+	finishRun := func(runErr error) {
+		if runRecord == nil {
+			return
+		}
+		if s := store.Global(); s != nil {
+			runRecord.CompletedAt = time.Now()
+			if runErr != nil {
+				runRecord.Status = store.RunStatusFailed
+				runRecord.Error = runErr.Error()
+			} else {
+				runRecord.Status = store.RunStatusSuccess
+			}
+			s.UpdateRun(runRecord)
+		}
+	}
+
 	for _, group := range w.Order {
 		if err := ctx.Err(); err != nil {
-			return results, fmt.Errorf("workflow '%s' cancelled: %w", w.Name, err)
+			runErr := fmt.Errorf("workflow '%s' cancelled: %w", w.Name, err)
+			finishRun(runErr)
+			return results, runErr
 		}
 
 		var wg sync.WaitGroup
@@ -354,7 +394,9 @@ func (w *Workflow) Run(ctx context.Context) (map[string]*providers.TaskResult, e
 
 			timeout, parseErr := w.resolveTimeout(task)
 			if parseErr != nil {
-				return results, fmt.Errorf("workflow '%s' failed: invalid timeout for task '%s': %w", w.Name, task.Name, parseErr)
+				runErr := fmt.Errorf("workflow '%s' failed: invalid timeout for task '%s': %w", w.Name, task.Name, parseErr)
+				finishRun(runErr)
+				return results, runErr
 			}
 
 			wg.Add(1)
@@ -438,9 +480,12 @@ func (w *Workflow) Run(ctx context.Context) (map[string]*providers.TaskResult, e
 		wg.Wait()
 
 		if len(errs) > 0 {
-			return results, fmt.Errorf("workflow '%s' failed: %v", w.Name, errs)
+			runErr := fmt.Errorf("workflow '%s' failed: %v", w.Name, errs)
+			finishRun(runErr)
+			return results, runErr
 		}
 	}
 
+	finishRun(nil)
 	return results, nil
 }

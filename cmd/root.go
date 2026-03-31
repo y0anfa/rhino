@@ -6,6 +6,7 @@ import (
 	"github.com/spf13/cobra"
 	"github.com/y0anfa/rhino/internal/config"
 	"github.com/y0anfa/rhino/internal/logger"
+	"github.com/y0anfa/rhino/internal/store"
 	"go.uber.org/zap"
 )
 
@@ -36,5 +37,9 @@ func initConfig() {
 		if err != nil {
 			logger.Fatal("failed to save default config", zap.Error(err))
 		}
+	}
+
+	if err := store.Init(store.DefaultDBPath()); err != nil {
+		logger.Warn("failed to initialize history store", zap.Error(err))
 	}
 }
