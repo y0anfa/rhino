@@ -14,8 +14,9 @@ type Trigger struct {
 	Description string      `yaml:"description"`
 	Type        TriggerType `yaml:"type"`
 	Schedule    string      `yaml:"schedule,omitempty"`
-	WatchPath   string      `yaml:"watch-path,omitempty"`
-	WatchEvents []string    `yaml:"watch-events,omitempty"`
+	WatchPath    string   `yaml:"watch-path,omitempty"`
+	WatchPattern string   `yaml:"watch-pattern,omitempty"`
+	WatchEvents  []string `yaml:"watch-events,omitempty"`
 	Debounce    string      `yaml:"debounce,omitempty"`
 }
 

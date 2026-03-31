@@ -2,6 +2,7 @@ package runner
 
 import (
 	"context"
+	"fmt"
 	"path/filepath"
 	"time"
 
@@ -19,10 +20,12 @@ type WatchRunner struct {
 }
 
 func (wr *WatchRunner) Run(ctx context.Context) error {
-	watchPath := wr.Workflow.Trigger.WatchPath
-	if watchPath == "" {
-		return nil
+	watchDir := wr.Workflow.Trigger.WatchPath
+	if watchDir == "" {
+		return fmt.Errorf("watch runner: watch-path is required for workflow '%s'", wr.Workflow.Name)
 	}
+
+	pattern := wr.Workflow.Trigger.WatchPattern // e.g. "*.txt", empty means all files
 
 	debounce := 500 * time.Millisecond
 	if d := wr.Workflow.Trigger.Debounce; d != "" {
@@ -33,15 +36,13 @@ func (wr *WatchRunner) Run(ctx context.Context) error {
 
 	watcher, err := fsnotify.NewWatcher()
 	if err != nil {
-		return err
+		return fmt.Errorf("watch runner: failed to create watcher: %w", err)
 	}
 	wr.watcher = watcher
 
-	// Resolve the watch path to a directory
-	dir := filepath.Dir(watchPath)
-	if err := watcher.Add(dir); err != nil {
+	if err := watcher.Add(watchDir); err != nil {
 		watcher.Close()
-		return err
+		return fmt.Errorf("watch runner: failed to watch directory '%s': %w", watchDir, err)
 	}
 
 	wr.ctx, wr.cancel = context.WithCancel(ctx)
@@ -62,13 +63,12 @@ func (wr *WatchRunner) Run(ctx context.Context) error {
 				if !wr.matchesEvent(event) {
 					continue
 				}
-				// Match against watch path pattern
-				matched, _ := filepath.Match(watchPath, event.Name)
-				if !matched {
-					matched, _ = filepath.Match(watchPath, filepath.Base(event.Name))
-				}
-				if !matched {
-					continue
+				// Match filename against pattern
+				if pattern != "" {
+					matched, _ := filepath.Match(pattern, filepath.Base(event.Name))
+					if !matched {
+						continue
+					}
 				}
 
 				logger.Info("file watch triggered",
@@ -101,7 +101,8 @@ func (wr *WatchRunner) Run(ctx context.Context) error {
 
 	logger.Info("started file watch runner",
 		zap.String("workflow", wr.Workflow.Name),
-		zap.String("path", watchPath))
+		zap.String("dir", watchDir),
+		zap.String("pattern", pattern))
 	return nil
 }
 
