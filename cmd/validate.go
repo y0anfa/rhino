@@ -9,10 +9,11 @@ import (
 )
 
 var validateCmd = &cobra.Command{
-	Use:   "validate <workflow>",
-	Short: "Validate a workflow definition",
-	Long:  `Load and validate a workflow YAML file without executing it. Reports success or detailed validation errors.`,
-	Args:  cobra.ExactArgs(1),
+	Use:               "validate <workflow>",
+	Short:             "Validate a workflow definition",
+	Long:              `Load and validate a workflow YAML file without executing it. Reports success or detailed validation errors.`,
+	Args:              cobra.ExactArgs(1),
+	ValidArgsFunction: completeWorkflowNames,
 	Run: func(cmd *cobra.Command, args []string) {
 		w, err := models.LoadWorkflow(args[0])
 		if err != nil {

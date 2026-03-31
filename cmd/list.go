@@ -1,12 +1,15 @@
 package cmd
 
 import (
+	"encoding/json"
 	"fmt"
 	"os"
 
 	"github.com/spf13/cobra"
 	"github.com/y0anfa/rhino/internal/models"
 )
+
+var listOutputFormat string
 
 var listCmd = &cobra.Command{
 	Use:   "list",
@@ -18,12 +21,20 @@ var listCmd = &cobra.Command{
 			fmt.Fprintf(os.Stderr, "Error listing workflows: %v\n", err)
 			os.Exit(1)
 		}
-		for _, w := range workflows {
-			fmt.Println(w)
+
+		switch listOutputFormat {
+		case "json":
+			data, _ := json.MarshalIndent(workflows, "", "  ")
+			fmt.Println(string(data))
+		default:
+			for _, w := range workflows {
+				fmt.Println(w)
+			}
 		}
 	},
 }
 
 func init() {
+	listCmd.Flags().StringVarP(&listOutputFormat, "output", "o", "text", "Output format: text, json")
 	rootCmd.AddCommand(listCmd)
 }

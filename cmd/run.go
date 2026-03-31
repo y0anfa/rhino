@@ -13,10 +13,11 @@ import (
 var dryRun bool
 
 var runCmd = &cobra.Command{
-	Use:   "run <workflow>",
-	Short: "Manually run a specific workflow",
-	Long:  `Load and execute a workflow by name. Use --dry-run to validate and preview the execution plan without running.`,
-	Args:  cobra.ExactArgs(1),
+	Use:               "run <workflow>",
+	Short:             "Manually run a specific workflow",
+	Long:              `Load and execute a workflow by name. Use --dry-run to validate and preview the execution plan without running.`,
+	Args:              cobra.ExactArgs(1),
+	ValidArgsFunction: completeWorkflowNames,
 	Run: func(cmd *cobra.Command, args []string) {
 		w, err := models.LoadWorkflow(args[0])
 		if err != nil {

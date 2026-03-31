@@ -9,10 +9,11 @@ import (
 )
 
 var deleteCmd = &cobra.Command{
-	Use:   "delete <workflow>",
-	Short: "Delete a workflow",
-	Long:  `Delete a workflow file from the configured workflows directory.`,
-	Args:  cobra.ExactArgs(1),
+	Use:               "delete <workflow>",
+	Short:             "Delete a workflow",
+	Long:              `Delete a workflow file from the configured workflows directory.`,
+	Args:              cobra.ExactArgs(1),
+	ValidArgsFunction: completeWorkflowNames,
 	Run: func(cmd *cobra.Command, args []string) {
 		fmt.Println("Deleting workflow " + args[0])
 		if err := models.DeleteWorkflow(args[0]); err != nil {

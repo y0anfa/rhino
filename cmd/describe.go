@@ -9,10 +9,11 @@ import (
 )
 
 var describeCmd = &cobra.Command{
-	Use:   "describe <workflow>",
-	Short: "Show workflow details",
-	Long:  `Display detailed information about a specific workflow including its trigger, tasks, and execution order.`,
-	Args:  cobra.ExactArgs(1),
+	Use:               "describe <workflow>",
+	Short:             "Show workflow details",
+	Long:              `Display detailed information about a specific workflow including its trigger, tasks, and execution order.`,
+	Args:              cobra.ExactArgs(1),
+	ValidArgsFunction: completeWorkflowNames,
 	Run: func(cmd *cobra.Command, args []string) {
 		w, err := models.LoadWorkflow(args[0])
 		if err != nil {
