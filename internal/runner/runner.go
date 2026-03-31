@@ -2,10 +2,12 @@ package runner
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"net/http"
 	"strconv"
 	"sync"
+	"time"
 
 	"github.com/robfig/cron/v3"
 	"github.com/y0anfa/rhino/internal/config"
@@ -13,6 +15,8 @@ import (
 	"github.com/y0anfa/rhino/internal/models"
 	"go.uber.org/zap"
 )
+
+var startTime = time.Now()
 
 type Runner interface {
 	Run(ctx context.Context) error
@@ -84,7 +88,8 @@ func RegisterWebhookWorkflow(workflow models.Workflow) {
 			Handler: webhookMux,
 		}
 
-		// Register the main handler
+		// Register handlers
+		webhookMux.HandleFunc("/health", healthHandler)
 		webhookMux.HandleFunc("/", webhookHandler)
 
 		// Start the server in a goroutine
@@ -145,6 +150,21 @@ func webhookHandler(w http.ResponseWriter, r *http.Request) {
 
 	w.WriteHeader(http.StatusAccepted)
 	fmt.Fprintf(w, "Workflow '%s' triggered successfully\n", workflowName)
+}
+
+func healthHandler(w http.ResponseWriter, r *http.Request) {
+	webhookMutex.RLock()
+	workflowCount := len(webhookWorkflows)
+	webhookMutex.RUnlock()
+
+	health := map[string]interface{}{
+		"status":    "healthy",
+		"uptime":    time.Since(startTime).String(),
+		"workflows": workflowCount,
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(health)
 }
 
 // StopWebhookServer stops the shared webhook server
