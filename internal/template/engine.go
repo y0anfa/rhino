@@ -12,12 +12,15 @@ import (
 
 var templateRegex = regexp.MustCompile(`\{\{([^}]+)\}\}`)
 
+type SecretResolver func(name string) (string, bool)
+
 type Context struct {
-	WorkflowName string
-	WorkflowDesc string
-	TriggerName  string
-	TriggerType  string
-	TaskResults  map[string]*providers.TaskResult
+	WorkflowName   string
+	WorkflowDesc   string
+	TriggerName    string
+	TriggerType    string
+	TaskResults    map[string]*providers.TaskResult
+	SecretResolver SecretResolver
 }
 
 func NewContext(workflowName, workflowDesc, triggerName, triggerType string) *Context {
@@ -69,7 +72,12 @@ func (c *Context) resolve(expr string) (string, bool) {
 		return time.Now().UTC().Format("2006-01-02"), true
 
 	case strings.HasPrefix(expr, "secret."):
-		// Secrets are resolved elsewhere; leave placeholder
+		key := expr[7:]
+		if c.SecretResolver != nil {
+			if val, ok := c.SecretResolver(key); ok {
+				return val, true
+			}
+		}
 		return "", false
 	}
 
