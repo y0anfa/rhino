@@ -1,6 +1,7 @@
 package models
 
 import (
+	"context"
 	"fmt"
 
 	"github.com/y0anfa/rhino/internal/providers"
@@ -19,15 +20,14 @@ type Task struct {
 }
 
 func NewTask(name, desc string, provider string, params map[string]interface{}) *Task {
-
 	return &Task{Name: name, Description: desc, Provider: provider, Params: params}
 }
 
-func (t *Task) Run() (*providers.TaskResult, error) {
-	return t.RunWithParams(t.Params)
+func (t *Task) Run(ctx context.Context) (*providers.TaskResult, error) {
+	return t.RunWithParams(ctx, t.Params)
 }
 
-func (t *Task) RunWithParams(params map[string]interface{}) (*providers.TaskResult, error) {
+func (t *Task) RunWithParams(ctx context.Context, params map[string]interface{}) (*providers.TaskResult, error) {
 	provider, err := providers.Get(t.Provider)
 	if err != nil {
 		return nil, fmt.Errorf("task execution failed: unknown provider '%s': %w", t.Provider, err)
@@ -36,7 +36,7 @@ func (t *Task) RunWithParams(params map[string]interface{}) (*providers.TaskResu
 	if err != nil {
 		return nil, fmt.Errorf("task execution failed: validation failed for task '%s': %w", t.Name, err)
 	}
-	result, err := provider.Run(params)
+	result, err := provider.Run(ctx, params)
 	if err != nil {
 		return nil, fmt.Errorf("task execution failed: provider '%s' failed for task '%s': %w", t.Provider, t.Name, err)
 	}

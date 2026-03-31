@@ -1,6 +1,9 @@
 package models
 
-import "testing"
+import (
+	"context"
+	"testing"
+)
 
 func TestNewTask(t *testing.T) {
 	params := map[string]interface{}{"command": "echo", "args": []interface{}{"hello"}}
@@ -21,7 +24,7 @@ func TestNewTask(t *testing.T) {
 
 func TestTaskRun_UnknownProvider(t *testing.T) {
 	task := NewTask("t1", "test", "nonexistent", map[string]interface{}{"key": "val"})
-	_, err := task.Run()
+	_, err := task.Run(context.Background())
 	if err == nil {
 		t.Error("expected error for unknown provider")
 	}

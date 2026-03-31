@@ -7,6 +7,7 @@ package providers
 
 import (
 	"bytes"
+	"context"
 	"fmt"
 	"os/exec"
 )
@@ -54,7 +55,7 @@ func (p *ShellProvider) Validate(args map[string]interface{}) error {
 }
 
 // Run runs the provider with the given arguments.
-func (p *ShellProvider) Run(args map[string]interface{}) (*TaskResult, error) {
+func (p *ShellProvider) Run(ctx context.Context, args map[string]interface{}) (*TaskResult, error) {
 	command := args["command"].(string)
 	argsSlice := make([]string, len(args["args"].([]interface{})))
 	for i, arg := range args["args"].([]interface{}) {
@@ -63,7 +64,7 @@ func (p *ShellProvider) Run(args map[string]interface{}) (*TaskResult, error) {
 
 	var stdout bytes.Buffer
 	var stderr bytes.Buffer
-	cmd := exec.Command(command, argsSlice...) // #nosec: G204
+	cmd := exec.CommandContext(ctx, command, argsSlice...) // #nosec: G204
 	cmd.Stdout = &stdout
 	cmd.Stderr = &stderr
 	if err := cmd.Run(); err != nil {

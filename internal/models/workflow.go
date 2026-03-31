@@ -375,7 +375,7 @@ func (w *Workflow) Run(ctx context.Context) (map[string]*providers.TaskResult, e
 								ch <- taskRunResult{err: fmt.Errorf("task '%s' panicked: %v", t.Name, r)}
 							}
 						}()
-						res, err := t.RunWithParams(resolvedParams)
+						res, err := t.RunWithParams(taskCtx, resolvedParams)
 						ch <- taskRunResult{result: res, err: err}
 					}()
 

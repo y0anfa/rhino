@@ -273,9 +273,9 @@ func TestRun_Success(t *testing.T) {
 
 type panicProvider struct{}
 
-func (p *panicProvider) Name() string                              { return "panic" }
-func (p *panicProvider) Validate(args map[string]interface{}) error { return nil }
-func (p *panicProvider) Run(args map[string]interface{}) (*providers.TaskResult, error) {
+func (p *panicProvider) Name() string                                                       { return "panic" }
+func (p *panicProvider) Validate(args map[string]interface{}) error                          { return nil }
+func (p *panicProvider) Run(_ context.Context, args map[string]interface{}) (*providers.TaskResult, error) {
 	panic("test panic")
 }
 

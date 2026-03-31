@@ -1,6 +1,7 @@
 package providers
 
 import (
+	"context"
 	"fmt"
 	"io"
 	"net/http"
@@ -67,7 +68,7 @@ func (p *HTTPProvider) Validate(args map[string]interface{}) error {
 	return nil
 }
 
-func (p *HTTPProvider) Run(args map[string]interface{}) (*TaskResult, error) {
+func (p *HTTPProvider) Run(ctx context.Context, args map[string]interface{}) (*TaskResult, error) {
 	method := strings.ToUpper(args["method"].(string))
 	reqURL := args["url"].(string)
 
@@ -76,7 +77,7 @@ func (p *HTTPProvider) Run(args map[string]interface{}) (*TaskResult, error) {
 		body, _ = b.(string)
 	}
 
-	req, err := http.NewRequest(method, reqURL, strings.NewReader(body))
+	req, err := http.NewRequestWithContext(ctx, method, reqURL, strings.NewReader(body))
 	if err != nil {
 		return nil, err
 	}

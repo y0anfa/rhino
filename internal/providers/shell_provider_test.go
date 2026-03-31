@@ -1,6 +1,7 @@
 package providers
 
 import (
+	"context"
 	"strings"
 	"testing"
 )
@@ -112,7 +113,7 @@ func TestShellProvider_Run(t *testing.T) {
 		"command": "echo",
 		"args":    []interface{}{"hello"},
 	}
-	result, err := p.Run(args)
+	result, err := p.Run(context.Background(), args)
 	if err != nil {
 		t.Errorf("expected successful run, got error: %v", err)
 	}
@@ -130,7 +131,7 @@ func TestShellProvider_Run_Failure(t *testing.T) {
 		"command": "false",
 		"args":    []interface{}{},
 	}
-	_, err := p.Run(args)
+	_, err := p.Run(context.Background(), args)
 	if err == nil {
 		t.Error("expected error from failing command")
 	}

@@ -1,6 +1,7 @@
 package providers
 
 import (
+	"context"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -151,7 +152,7 @@ func TestHTTPProvider_Run_GET(t *testing.T) {
 		"method": "GET",
 		"url":    server.URL,
 	}
-	result, err := p.Run(args)
+	result, err := p.Run(context.Background(), args)
 	if err != nil {
 		t.Errorf("expected successful run, got error: %v", err)
 	}
@@ -183,7 +184,7 @@ func TestHTTPProvider_Run_POST_WithBody(t *testing.T) {
 		"body":    `{"key":"value"}`,
 		"headers": map[string]interface{}{"Content-Type": "application/json"},
 	}
-	result, err := p.Run(args)
+	result, err := p.Run(context.Background(), args)
 	if err != nil {
 		t.Errorf("expected successful run, got error: %v", err)
 	}
@@ -203,7 +204,7 @@ func TestHTTPProvider_Run_NoBody(t *testing.T) {
 		"method": "GET",
 		"url":    server.URL,
 	}
-	_, err := p.Run(args)
+	_, err := p.Run(context.Background(), args)
 	if err != nil {
 		t.Errorf("expected successful run without body, got error: %v", err)
 	}
@@ -220,7 +221,7 @@ func TestHTTPProvider_Run_4xx(t *testing.T) {
 		"method": "GET",
 		"url":    server.URL,
 	}
-	_, err := p.Run(args)
+	_, err := p.Run(context.Background(), args)
 	if err == nil || !strings.Contains(err.Error(), "status 404") {
 		t.Errorf("expected 404 error, got: %v", err)
 	}
@@ -237,7 +238,7 @@ func TestHTTPProvider_Run_5xx(t *testing.T) {
 		"method": "GET",
 		"url":    server.URL,
 	}
-	_, err := p.Run(args)
+	_, err := p.Run(context.Background(), args)
 	if err == nil || !strings.Contains(err.Error(), "status 500") {
 		t.Errorf("expected 500 error, got: %v", err)
 	}
