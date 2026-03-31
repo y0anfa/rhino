@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/spf13/cobra"
+	"github.com/y0anfa/rhino/internal/config"
 	"github.com/y0anfa/rhino/internal/logger"
 	"github.com/y0anfa/rhino/internal/models"
 	"github.com/y0anfa/rhino/internal/runner"
@@ -41,6 +42,9 @@ var runnerCmd = &cobra.Command{
 			case models.TriggerWebhook:
 				logger.Info("registering webhook runner", zap.String("workflow", w.Name))
 				runnerManager.AddRunner(&runner.WebhookRunner{Workflow: w})
+			case models.TriggerWatch:
+				logger.Info("registering watch runner", zap.String("workflow", w.Name))
+				runnerManager.AddRunner(&runner.WatchRunner{Workflow: w})
 			default:
 				logger.Error("unknown trigger type", zap.String("workflow", w.Name), zap.String("trigger", string(w.Trigger.Type)))
 			}
@@ -51,6 +55,12 @@ var runnerCmd = &cobra.Command{
 			logger.Error("some runners failed to start", zap.Error(err))
 		}
 
+		// Start hot reload
+		reloader := runner.NewHotReloader(config.GetString("workflows-dir"), runnerManager)
+		if err := reloader.Start(ctx); err != nil {
+			logger.Error("failed to start hot reload", zap.Error(err))
+		}
+
 		logger.Info("runner started, press Ctrl+C to stop")
 
 		sigChan := make(chan os.Signal, 1)
@@ -58,6 +68,9 @@ var runnerCmd = &cobra.Command{
 		<-sigChan
 
 		logger.Info("shutting down runner")
+		if err := reloader.Stop(); err != nil {
+			logger.Error("error stopping hot reload", zap.Error(err))
+		}
 		shutdownCtx, shutdownCancel := context.WithTimeout(context.Background(), shutdownTimeout)
 		defer shutdownCancel()
 		if err := runnerManager.Stop(shutdownCtx); err != nil {

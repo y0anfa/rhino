@@ -230,6 +230,19 @@ func LoadWorkflows() ([]Workflow, error) {
 	return workflows, nil
 }
 
+func init() {
+	providers.WorkflowExecutor = func(ctx context.Context, name string) (map[string]*providers.TaskResult, error) {
+		w, err := LoadWorkflow(name)
+		if err != nil {
+			return nil, fmt.Errorf("failed to load workflow '%s': %w", name, err)
+		}
+		if err := w.Validate(); err != nil {
+			return nil, fmt.Errorf("workflow '%s' validation failed: %w", name, err)
+		}
+		return w.Run(ctx)
+	}
+}
+
 type taskRunResult struct {
 	result *providers.TaskResult
 	err    error

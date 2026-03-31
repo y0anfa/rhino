@@ -6,13 +6,17 @@ const (
 	TriggerManual    TriggerType = "manual"
 	TriggerScheduled TriggerType = "cron"
 	TriggerWebhook   TriggerType = "webhook"
+	TriggerWatch     TriggerType = "watch"
 )
 
 type Trigger struct {
 	Name        string      `yaml:"name"`
 	Description string      `yaml:"description"`
 	Type        TriggerType `yaml:"type"`
-	Schedule    string      `yaml:"schedule"`
+	Schedule    string      `yaml:"schedule,omitempty"`
+	WatchPath   string      `yaml:"watch-path,omitempty"`
+	WatchEvents []string    `yaml:"watch-events,omitempty"`
+	Debounce    string      `yaml:"debounce,omitempty"`
 }
 
 func NewTrigger(name string, desc string, triggertype TriggerType, schedule string) *Trigger {
