@@ -9,11 +9,13 @@ const (
 )
 
 type Settings struct {
-	MaxTries       int    `yaml:"max-tries"`
-	Timeout        string `yaml:"timeout"`
-	RetryBackoff   string `yaml:"retry-backoff,omitempty"`
-	RetryBaseDelay string `yaml:"retry-base-delay,omitempty"`
-	RetryMaxDelay  string `yaml:"retry-max-delay,omitempty"`
+	MaxTries           int    `yaml:"max-tries"`
+	Timeout            string `yaml:"timeout"`
+	RetryBackoff       string `yaml:"retry-backoff,omitempty"`
+	RetryBaseDelay     string `yaml:"retry-base-delay,omitempty"`
+	RetryMaxDelay      string `yaml:"retry-max-delay,omitempty"`
+	MaxConcurrentRuns  int    `yaml:"max-concurrent-runs,omitempty"`
+	MaxOutputSize      int    `yaml:"max-output-size,omitempty"`
 }
 
 func NewSettings(maxTries int, timeout string) *Settings {

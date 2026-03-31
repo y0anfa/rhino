@@ -24,9 +24,10 @@ import (
 )
 
 type Workflow struct {
-	Name        string     `yaml:"name"`
-	Description string     `yaml:"description"`
-	Settings    Settings   `yaml:"settings"`
+	Name          string              `yaml:"name"`
+	Description   string              `yaml:"description"`
+	Settings      Settings            `yaml:"settings"`
+	Notifications *NotificationConfig `yaml:"notifications,omitempty"`
 	Trigger     Trigger    `yaml:"trigger"`
 	Tasks       []Task     `yaml:"tasks"`
 	Order       [][]string `yaml:"order"`
@@ -266,6 +267,36 @@ func (w *Workflow) buildDAGOrder() ([][]string, error) {
 	return order, nil
 }
 
+func (w *Workflow) sendNotifications(runErr error) {
+	if w.Notifications == nil {
+		return
+	}
+
+	var channels []NotificationChannel
+	if runErr == nil {
+		channels = w.Notifications.OnSuccess
+	} else {
+		channels = w.Notifications.OnFailure
+	}
+
+	for _, ch := range channels {
+		provider, err := providers.Get(ch.Provider)
+		if err != nil {
+			logger.Error("notification provider not found",
+				zap.String("provider", ch.Provider), zap.Error(err))
+			continue
+		}
+		// Resolve template expressions in notification params
+		resolvedParams := template.ResolveParams(ch.Params,
+			template.NewContext(w.Name, w.Description, w.Trigger.Name, string(w.Trigger.Type)))
+
+		if _, err := provider.Run(context.Background(), resolvedParams); err != nil {
+			logger.Error("notification failed",
+				zap.String("provider", ch.Provider), zap.Error(err))
+		}
+	}
+}
+
 func (w *Workflow) Save() error {
 	dir := config.GetString("workflows-dir")
 	path := filepath.Join(dir, w.Name+".yaml")
@@ -450,6 +481,9 @@ func (w *Workflow) Run(ctx context.Context) (map[string]*providers.TaskResult, e
 			}
 			s.UpdateRun(runRecord)
 		}
+
+		// Send notifications
+		w.sendNotifications(runErr)
 	}
 
 	for _, group := range w.Order {
