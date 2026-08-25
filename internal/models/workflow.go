@@ -80,7 +80,14 @@ func ListWorkflows() ([]string, error) {
 		return nil, err
 	}
 	for _, f := range files {
-		workflows = append(workflows, strings.Split(f.Name(), ".")[0])
+		if f.IsDir() {
+			continue
+		}
+		ext := filepath.Ext(f.Name())
+		if ext != ".yaml" && ext != ".yml" {
+			continue
+		}
+		workflows = append(workflows, strings.TrimSuffix(f.Name(), ext))
 	}
 	return workflows, nil
 }
@@ -394,20 +401,29 @@ func (w *Workflow) retryDelay(attempt int) time.Duration {
 		maxDelay = time.Minute
 	}
 
-	var delay time.Duration
+	if baseDelay <= 0 || maxDelay <= 0 {
+		return 0
+	}
+
+	var scaled float64
 	switch backoff {
 	case "linear":
-		delay = baseDelay * time.Duration(attempt+1)
+		scaled = float64(baseDelay) * float64(attempt+1)
 	case "exponential":
-		delay = baseDelay * time.Duration(math.Pow(2, float64(attempt)))
+		scaled = float64(baseDelay) * math.Pow(2, float64(attempt))
 	default:
 		return 0
 	}
 
-	// Add jitter: 0-25% of computed delay
-	jitter := time.Duration(rand.Int63n(int64(delay/4) + 1))
-	delay += jitter
+	// Cap before adding jitter: a large attempt count overflows time.Duration,
+	// which would make the delay (and the jitter bound) negative.
+	delay := maxDelay
+	if scaled > 0 && scaled < float64(maxDelay) {
+		delay = time.Duration(scaled)
+	}
 
+	// Add jitter: 0-25% of computed delay
+	delay += time.Duration(rand.Int63n(int64(delay/4) + 1))
 	if delay > maxDelay {
 		delay = maxDelay
 	}
@@ -441,12 +457,31 @@ func (w *Workflow) evaluateCondition(t *Task, taskStatuses map[string]string) bo
 	return true
 }
 
+// resolveOrder returns the execution order, deriving it from depends-on when no
+// explicit order is set (Validate does the same, but Run may be called directly).
+func (w *Workflow) resolveOrder() ([][]string, error) {
+	if len(w.Order) > 0 {
+		return w.Order, nil
+	}
+	for _, t := range w.Tasks {
+		if len(t.DependsOn) > 0 {
+			return w.buildDAGOrder()
+		}
+	}
+	return nil, fmt.Errorf("no execution order: set 'order' or 'depends-on'")
+}
+
 func (w *Workflow) Run(ctx context.Context) (map[string]*providers.TaskResult, error) {
 	results := make(map[string]*providers.TaskResult)
 	var resultsMu sync.Mutex
 	taskStatuses := make(map[string]string)
 	var statusMu sync.Mutex
 	tmplCtx := template.NewContext(w.Name, w.Description, w.Trigger.Name, string(w.Trigger.Type))
+
+	order, orderErr := w.resolveOrder()
+	if orderErr != nil {
+		return results, fmt.Errorf("workflow '%s' failed: %w", w.Name, orderErr)
+	}
 
 	// Record run in history store
 	var runRecord *store.WorkflowRun
@@ -486,7 +521,7 @@ func (w *Workflow) Run(ctx context.Context) (map[string]*providers.TaskResult, e
 		w.sendNotifications(runErr)
 	}
 
-	for _, group := range w.Order {
+	for _, group := range order {
 		if err := ctx.Err(); err != nil {
 			runErr := fmt.Errorf("workflow '%s' cancelled: %w", w.Name, err)
 			finishRun(runErr)
@@ -499,6 +534,11 @@ func (w *Workflow) Run(ctx context.Context) (map[string]*providers.TaskResult, e
 
 		for _, taskName := range group {
 			task := w.GetTask(taskName)
+			if task == nil {
+				runErr := fmt.Errorf("workflow '%s' failed: task '%s' in order not found", w.Name, taskName)
+				finishRun(runErr)
+				return results, runErr
+			}
 			if task.MaxTries == 0 {
 				task.MaxTries = w.Settings.MaxTries
 			}
@@ -531,15 +571,18 @@ func (w *Workflow) Run(ctx context.Context) (map[string]*providers.TaskResult, e
 				resolvedParams := template.ResolveParams(t.Params, tmplCtx)
 
 				var lastErr error
+			retries:
 				for try := 0; try < t.MaxTries; try++ {
 					if try > 0 {
 						delay := w.retryDelay(try - 1)
 						if delay > 0 {
+							timer := time.NewTimer(delay)
 							select {
 							case <-ctx.Done():
+								timer.Stop()
 								lastErr = ctx.Err()
-								break
-							case <-time.After(delay):
+								break retries
+							case <-timer.C:
 							}
 						}
 					}

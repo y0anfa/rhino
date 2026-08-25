@@ -28,12 +28,20 @@ func (q *MemoryQueue) Enqueue(msg *TaskMessage) error {
 		return fmt.Errorf("queue is closed")
 	}
 	q.items = append(q.items, msg)
+	q.signal()
+	return nil
+}
+
+// signal wakes one waiting consumer. The caller must hold q.mu.
+func (q *MemoryQueue) signal() {
+	if q.closed {
+		return
+	}
 	// Non-blocking signal
 	select {
 	case q.notify <- struct{}{}:
 	default:
 	}
-	return nil
 }
 
 func (q *MemoryQueue) Dequeue(ctx context.Context) (*TaskMessage, error) {
@@ -43,6 +51,10 @@ func (q *MemoryQueue) Dequeue(ctx context.Context) (*TaskMessage, error) {
 			msg := q.items[0]
 			q.items = q.items[1:]
 			q.pending[msg.ID] = msg
+			if len(q.items) > 0 {
+				// Signals are coalesced, so hand the wake-up on to the next consumer.
+				q.signal()
+			}
 			q.mu.Unlock()
 			return msg, nil
 		}
@@ -73,10 +85,7 @@ func (q *MemoryQueue) Nack(id string) error {
 	if msg, ok := q.pending[id]; ok {
 		delete(q.pending, id)
 		q.items = append(q.items, msg) // re-enqueue
-		select {
-		case q.notify <- struct{}{}:
-		default:
-		}
+		q.signal()
 	}
 	return nil
 }
@@ -90,6 +99,9 @@ func (q *MemoryQueue) Len() int {
 func (q *MemoryQueue) Close() error {
 	q.mu.Lock()
 	defer q.mu.Unlock()
+	if q.closed {
+		return nil
+	}
 	q.closed = true
 	close(q.notify)
 	return nil

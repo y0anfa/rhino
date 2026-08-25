@@ -1,6 +1,9 @@
 package store
 
-import "time"
+import (
+	"encoding/json"
+	"time"
+)
 
 type RunStatus string
 
@@ -43,6 +46,31 @@ type TaskExecution struct {
 	Error      string     `json:"error,omitempty"`
 	Retries    int        `json:"retries"`
 	DurationMs int64      `json:"duration_ms"`
+}
+
+// MarshalJSON omits an unset completion time instead of emitting year 1.
+func (r WorkflowRun) MarshalJSON() ([]byte, error) {
+	type alias WorkflowRun
+	return json.Marshal(struct {
+		alias
+		CompletedAt *time.Time `json:"completed_at,omitempty"`
+	}{alias: alias(r), CompletedAt: optionalTime(r.CompletedAt)})
+}
+
+// MarshalJSON omits an unset completion time instead of emitting year 1.
+func (e TaskExecution) MarshalJSON() ([]byte, error) {
+	type alias TaskExecution
+	return json.Marshal(struct {
+		alias
+		CompletedAt *time.Time `json:"completed_at,omitempty"`
+	}{alias: alias(e), CompletedAt: optionalTime(e.CompletedAt)})
+}
+
+func optionalTime(t time.Time) *time.Time {
+	if t.IsZero() {
+		return nil
+	}
+	return &t
 }
 
 type RunFilter struct {

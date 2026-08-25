@@ -87,12 +87,20 @@ func (s *SQLiteStore) migrate() error {
 	return err
 }
 
+// nullTime stores an unset completion time as NULL rather than year 1.
+func nullTime(t time.Time) interface{} {
+	if t.IsZero() {
+		return nil
+	}
+	return t
+}
+
 func (s *SQLiteStore) SaveRun(run *WorkflowRun) error {
 	_, err := s.db.Exec(
 		`INSERT INTO workflow_runs (id, workflow_name, workflow_hash, workflow_yaml, status, trigger_type, started_at, completed_at, error)
 		 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
 		run.ID, run.WorkflowName, run.WorkflowHash, run.WorkflowYAML,
-		run.Status, run.TriggerType, run.StartedAt, run.CompletedAt, run.Error,
+		run.Status, run.TriggerType, run.StartedAt, nullTime(run.CompletedAt), run.Error,
 	)
 	return err
 }
@@ -100,7 +108,7 @@ func (s *SQLiteStore) SaveRun(run *WorkflowRun) error {
 func (s *SQLiteStore) UpdateRun(run *WorkflowRun) error {
 	_, err := s.db.Exec(
 		`UPDATE workflow_runs SET status = ?, completed_at = ?, error = ? WHERE id = ?`,
-		run.Status, run.CompletedAt, run.Error, run.ID,
+		run.Status, nullTime(run.CompletedAt), run.Error, run.ID,
 	)
 	return err
 }
@@ -181,7 +189,7 @@ func (s *SQLiteStore) SaveTaskExecution(exec *TaskExecution) error {
 		`INSERT INTO task_executions (id, run_id, task_name, provider, status, started_at, completed_at, output, error, retries, duration_ms)
 		 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
 		exec.ID, exec.RunID, exec.TaskName, exec.Provider, exec.Status,
-		exec.StartedAt, exec.CompletedAt, exec.Output, exec.Error, exec.Retries, exec.DurationMs,
+		exec.StartedAt, nullTime(exec.CompletedAt), exec.Output, exec.Error, exec.Retries, exec.DurationMs,
 	)
 	return err
 }

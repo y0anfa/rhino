@@ -28,6 +28,9 @@ var workerCmd = &cobra.Command{
 			zap.String("name", workerName),
 			zap.Int("concurrency", workerConcurrency))
 
+		// The in-memory queue lives inside this process: it is only fed by
+		// producers running here, not by other rhino processes.
+		logger.Warn("using the in-memory task queue; only tasks enqueued in this process will be executed")
 		q := queue.NewMemoryQueue()
 		w := worker.New(workerName, workerConcurrency, q)
 
