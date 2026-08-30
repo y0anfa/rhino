@@ -5,6 +5,7 @@ import (
 	"os"
 	"regexp"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/y0anfa/rhino/internal/providers"
@@ -14,6 +15,8 @@ var templateRegex = regexp.MustCompile(`\{\{([^}]+)\}\}`)
 
 type SecretResolver func(name string) (string, bool)
 
+// Context is safe for concurrent use: a workflow shares one context across tasks
+// that run in parallel, so results are written while siblings resolve their params.
 type Context struct {
 	WorkflowName   string
 	WorkflowDesc   string
@@ -21,6 +24,8 @@ type Context struct {
 	TriggerType    string
 	TaskResults    map[string]*providers.TaskResult
 	SecretResolver SecretResolver
+
+	mu sync.RWMutex
 }
 
 func NewContext(workflowName, workflowDesc, triggerName, triggerType string) *Context {
@@ -34,7 +39,16 @@ func NewContext(workflowName, workflowDesc, triggerName, triggerType string) *Co
 }
 
 func (c *Context) SetTaskResult(taskName string, result *providers.TaskResult) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
 	c.TaskResults[taskName] = result
+}
+
+func (c *Context) taskResult(taskName string) (*providers.TaskResult, bool) {
+	c.mu.RLock()
+	defer c.mu.RUnlock()
+	result, ok := c.TaskResults[taskName]
+	return result, ok
 }
 
 func (c *Context) Resolve(input string) string {
@@ -93,7 +107,7 @@ func (c *Context) resolveTaskExpr(expr string) (string, bool) {
 	taskName := parts[0]
 	field := parts[1]
 
-	result, ok := c.TaskResults[taskName]
+	result, ok := c.taskResult(taskName)
 	if !ok || result == nil {
 		return "", false
 	}

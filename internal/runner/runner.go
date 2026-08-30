@@ -30,12 +30,16 @@ type CronRunner struct {
 
 func (cr *CronRunner) Run(ctx context.Context) error {
 	logger.Info("starting cron runner", zap.String("workflow", cr.Workflow.Name))
-	cr.Scheduler = cron.New(cron.WithSeconds())
-	cr.Scheduler.AddFunc(cr.Workflow.Trigger.Schedule, func() {
+	// Schedules are validated with cron.ParseStandard, so use the same 5-field parser here.
+	cr.Scheduler = cron.New()
+	if _, err := cr.Scheduler.AddFunc(cr.Workflow.Trigger.Schedule, func() {
 		if _, err := cr.Workflow.Run(ctx); err != nil {
 			logger.Error("workflow execution failed", zap.String("workflow", cr.Workflow.Name), zap.Error(err))
 		}
-	})
+	}); err != nil {
+		return fmt.Errorf("cron runner: invalid schedule '%s' for workflow '%s': %w",
+			cr.Workflow.Trigger.Schedule, cr.Workflow.Name, err)
+	}
 	cr.Scheduler.Start()
 	return nil
 }
@@ -142,8 +146,11 @@ func webhookHandler(w http.ResponseWriter, r *http.Request) {
 
 	logger.Info("webhook triggered", zap.String("workflow", workflowName))
 
+	// The request context is cancelled as soon as this handler returns, so detach
+	// from it while keeping any request-scoped values.
+	runCtx := context.WithoutCancel(r.Context())
 	go func() {
-		if _, err := workflow.Run(r.Context()); err != nil {
+		if _, err := workflow.Run(runCtx); err != nil {
 			logger.Error("workflow execution failed", zap.String("workflow", workflowName), zap.Error(err))
 		}
 	}()
