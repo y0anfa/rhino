@@ -3,6 +3,7 @@ package runner
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"net/http"
 	"strconv"
@@ -13,10 +14,21 @@ import (
 	"github.com/y0anfa/rhino/internal/config"
 	"github.com/y0anfa/rhino/internal/logger"
 	"github.com/y0anfa/rhino/internal/models"
+	"github.com/y0anfa/rhino/internal/store"
 	"go.uber.org/zap"
 )
 
 var startTime = time.Now()
+
+// logRunError logs a failed run; a run dropped by max-concurrent-runs is
+// expected back-pressure, not a failure.
+func logRunError(workflow string, err error) {
+	if errors.Is(err, models.ErrTooManyRuns) {
+		logger.Warn("workflow run skipped: max concurrent runs reached", zap.String("workflow", workflow), zap.Error(err))
+		return
+	}
+	logger.Error("workflow execution failed", zap.String("workflow", workflow), zap.Error(err))
+}
 
 type Runner interface {
 	Run(ctx context.Context) error
@@ -24,7 +36,7 @@ type Runner interface {
 }
 
 type CronRunner struct {
-	Workflow models.Workflow
+	Workflow  models.Workflow
 	Scheduler *cron.Cron
 }
 
@@ -34,7 +46,7 @@ func (cr *CronRunner) Run(ctx context.Context) error {
 	cr.Scheduler = cron.New()
 	if _, err := cr.Scheduler.AddFunc(cr.Workflow.Trigger.Schedule, func() {
 		if _, err := cr.Workflow.Run(ctx); err != nil {
-			logger.Error("workflow execution failed", zap.String("workflow", cr.Workflow.Name), zap.Error(err))
+			logRunError(cr.Workflow.Name, err)
 		}
 	}); err != nil {
 		return fmt.Errorf("cron runner: invalid schedule '%s' for workflow '%s': %w",
@@ -43,6 +55,8 @@ func (cr *CronRunner) Run(ctx context.Context) error {
 	cr.Scheduler.Start()
 	return nil
 }
+
+func (cr *CronRunner) WorkflowName() string { return cr.Workflow.Name }
 
 func (cr *CronRunner) Stop(ctx context.Context) error {
 	logger.Info("stopping cron runner", zap.String("workflow", cr.Workflow.Name))
@@ -62,6 +76,8 @@ func (wr *WebhookRunner) Run(ctx context.Context) error {
 	RegisterWebhookWorkflow(wr.Workflow)
 	return nil
 }
+
+func (wr *WebhookRunner) WorkflowName() string { return wr.Workflow.Name }
 
 func (wr *WebhookRunner) Stop(ctx context.Context) error {
 	logger.Info("unregistering webhook handler", zap.String("workflow", wr.Workflow.Name))
@@ -122,6 +138,14 @@ func UnregisterWebhookWorkflow(workflowName string) {
 
 // webhookHandler handles all webhook requests
 func webhookHandler(w http.ResponseWriter, r *http.Request) {
+	// Triggering a run is a side effect, so only POST is accepted: crawlers,
+	// browsers, and health probes must not start workflows.
+	if r.Method != http.MethodPost {
+		w.Header().Set("Allow", http.MethodPost)
+		http.Error(w, "Method not allowed. Use POST /webhook/{workflow-name}", http.StatusMethodNotAllowed)
+		return
+	}
+
 	// Extract workflow name from path: /webhook/{workflow-name}
 	path := r.URL.Path
 	if len(path) < 9 || path[:9] != "/webhook/" {
@@ -149,14 +173,21 @@ func webhookHandler(w http.ResponseWriter, r *http.Request) {
 	// The request context is cancelled as soon as this handler returns, so detach
 	// from it while keeping any request-scoped values.
 	runCtx := context.WithoutCancel(r.Context())
+	runID := store.NewID()
+	runCtx = models.WithRunID(runCtx, runID)
 	go func() {
 		if _, err := workflow.Run(runCtx); err != nil {
-			logger.Error("workflow execution failed", zap.String("workflow", workflowName), zap.Error(err))
+			logRunError(workflowName, err)
 		}
 	}()
 
+	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(http.StatusAccepted)
-	fmt.Fprintf(w, "Workflow '%s' triggered successfully\n", workflowName)
+	json.NewEncoder(w).Encode(map[string]string{
+		"workflow": workflowName,
+		"run_id":   runID,
+		"status":   "triggered",
+	})
 }
 
 func healthHandler(w http.ResponseWriter, r *http.Request) {
