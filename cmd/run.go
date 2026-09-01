@@ -4,13 +4,17 @@ import (
 	"context"
 	"fmt"
 	"os"
+	"sort"
 	"strings"
 
 	"github.com/spf13/cobra"
 	"github.com/y0anfa/rhino/internal/models"
 )
 
-var dryRun bool
+var (
+	dryRun    bool
+	runInputs []string
+)
 
 var runCmd = &cobra.Command{
 	Use:               "run <workflow>",
@@ -30,9 +34,35 @@ var runCmd = &cobra.Command{
 			os.Exit(1)
 		}
 
+		inputs, err := models.ParseInputFlags(runInputs)
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "Error: %v\n", err)
+			os.Exit(1)
+		}
+		if err := w.CheckInputs(inputs, true); err != nil {
+			fmt.Fprintf(os.Stderr, "Error: %v\n", err)
+			os.Exit(1)
+		}
+		ctx := models.WithInputs(context.Background(), inputs)
+
 		if dryRun {
 			fmt.Printf("Workflow: %s\n", w.Name)
 			fmt.Printf("Settings: max-tries=%d, timeout=%s\n", w.Settings.MaxTries, w.Settings.Timeout)
+			if len(w.Inputs) > 0 {
+				fmt.Println("Inputs:")
+				names := make([]string, 0, len(w.Inputs))
+				for name := range w.Inputs {
+					names = append(names, name)
+				}
+				sort.Strings(names)
+				for _, name := range names {
+					value, provided := inputs[name]
+					if !provided {
+						value = w.Inputs[name].Default
+					}
+					fmt.Printf("  %s=%s\n", name, value)
+				}
+			}
 			fmt.Println("\nExecution plan:")
 			for i, group := range w.Order {
 				fmt.Printf("  Step %d: [%s]\n", i+1, strings.Join(group, ", "))
@@ -47,7 +77,7 @@ var runCmd = &cobra.Command{
 			return
 		}
 
-		results, err := w.Run(context.Background())
+		results, err := w.Run(ctx)
 		if err != nil {
 			fmt.Fprintf(os.Stderr, "Error running workflow: %v\n", err)
 			os.Exit(1)
@@ -63,4 +93,5 @@ var runCmd = &cobra.Command{
 func init() {
 	rootCmd.AddCommand(runCmd)
 	runCmd.Flags().BoolVar(&dryRun, "dry-run", false, "Validate and show execution plan without running")
+	runCmd.Flags().StringArrayVarP(&runInputs, "input", "i", nil, "Workflow input as key=value (repeatable)")
 }

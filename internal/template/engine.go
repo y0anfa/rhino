@@ -24,6 +24,7 @@ type Context struct {
 	TriggerType    string
 	RunID          string
 	RunError       string
+	Inputs         map[string]string
 	TaskResults    map[string]*providers.TaskResult
 	SecretResolver SecretResolver
 
@@ -89,6 +90,10 @@ func (c *Context) resolve(expr string) (string, bool) {
 
 	case strings.HasPrefix(expr, "task."):
 		return c.resolveTaskExpr(expr[5:])
+
+	case strings.HasPrefix(expr, "input."):
+		val, ok := c.Inputs[expr[6:]]
+		return val, ok
 
 	case expr == "workflow.name":
 		return c.WorkflowName, true

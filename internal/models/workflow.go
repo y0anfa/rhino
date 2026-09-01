@@ -10,6 +10,7 @@ import (
 	"os"
 	"path/filepath"
 	"regexp"
+	"sort"
 	"strings"
 	"sync"
 	"time"
@@ -29,6 +30,7 @@ type Workflow struct {
 	Description   string              `yaml:"description"`
 	Settings      Settings            `yaml:"settings"`
 	Notifications *NotificationConfig `yaml:"notifications,omitempty"`
+	Inputs        map[string]Input    `yaml:"inputs,omitempty"`
 	Trigger       Trigger             `yaml:"trigger"`
 	Tasks         []Task              `yaml:"tasks"`
 	Order         [][]string          `yaml:"order"`
@@ -49,6 +51,27 @@ func (w *Workflow) Describe() string {
 	desc += "\nSettings:\n"
 	desc += fmt.Sprintf("  Max Tries: %d\n", w.Settings.MaxTries)
 	desc += fmt.Sprintf("  Timeout: %s\n", w.Settings.Timeout)
+	if len(w.Inputs) > 0 {
+		desc += "\nInputs:\n"
+		names := make([]string, 0, len(w.Inputs))
+		for name := range w.Inputs {
+			names = append(names, name)
+		}
+		sort.Strings(names)
+		for _, name := range names {
+			in := w.Inputs[name]
+			line := "  - " + name
+			if in.Required {
+				line += " (required)"
+			} else if in.Default != "" {
+				line += fmt.Sprintf(" (default: %s)", in.Default)
+			}
+			if in.Description != "" {
+				line += ": " + in.Description
+			}
+			desc += line + "\n"
+		}
+	}
 	desc += "\nTrigger:\n"
 	desc += fmt.Sprintf("  Name: %s\n", w.Trigger.Name)
 	desc += fmt.Sprintf("  Type: %s\n", w.Trigger.Type)
@@ -171,6 +194,9 @@ func (w *Workflow) Validate() error {
 	}
 	if len(w.Tasks) == 0 {
 		return fmt.Errorf("workflow validation failed: tasks list is empty")
+	}
+	if err := w.validateInputs(); err != nil {
+		return fmt.Errorf("workflow validation failed: %w", err)
 	}
 	seenTasks := make(map[string]bool, len(w.Tasks))
 	for _, t := range w.Tasks {
@@ -419,7 +445,7 @@ func LoadWorkflows() ([]Workflow, error) {
 }
 
 func init() {
-	providers.WorkflowExecutor = func(ctx context.Context, name string) (map[string]*providers.TaskResult, error) {
+	providers.WorkflowExecutor = func(ctx context.Context, name string, inputs map[string]string) (map[string]*providers.TaskResult, error) {
 		w, err := LoadWorkflow(name)
 		if err != nil {
 			return nil, fmt.Errorf("failed to load workflow '%s': %w", name, err)
@@ -427,7 +453,8 @@ func init() {
 		if err := w.Validate(); err != nil {
 			return nil, fmt.Errorf("workflow '%s' validation failed: %w", name, err)
 		}
-		return w.Run(ctx)
+		// A child run gets its own ID; only the inputs are inherited.
+		return w.Run(WithInputs(WithRunID(ctx, ""), inputs))
 	}
 }
 
@@ -705,6 +732,12 @@ func (w *Workflow) Run(ctx context.Context) (map[string]*providers.TaskResult, e
 		return results, fmt.Errorf("workflow '%s' failed: %w", w.Name, orderErr)
 	}
 
+	inputs, err := w.resolveInputs(inputsFromContext(ctx), !LenientInputs(ctx))
+	if err != nil {
+		return results, err
+	}
+	tmplCtx.Inputs = inputs
+
 	release, err := acquireRunSlot(w.Name, w.Settings.MaxConcurrentRuns)
 	if err != nil {
 		return results, err
@@ -729,6 +762,7 @@ func (w *Workflow) Run(ctx context.Context) (map[string]*providers.TaskResult, e
 			WorkflowYAML: string(yamlBytes),
 			Status:       store.RunStatusRunning,
 			TriggerType:  string(w.Trigger.Type),
+			Inputs:       inputs,
 			StartedAt:    time.Now(),
 		}
 		if err := s.SaveRun(runRecord); err != nil {

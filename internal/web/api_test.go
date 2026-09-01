@@ -6,6 +6,7 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
@@ -168,5 +169,77 @@ func TestAPI_Runs_Filters(t *testing.T) {
 	h.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/api/runs?workflow=none", nil))
 	if rec.Body.String() != "[]\n" {
 		t.Errorf("expected an empty JSON array, got %q", rec.Body.String())
+	}
+}
+
+const inputWorkflow = `name: api-inputs
+settings:
+  max-tries: 1
+  timeout: 5s
+trigger:
+  name: t1
+  type: manual
+inputs:
+  env:
+    default: staging
+  version:
+    required: true
+tasks:
+  - name: say
+    provider: shell
+    params:
+      command: echo
+      args: ["{{input.env}}/{{input.version}}"]
+order:
+  - [say]
+`
+
+func TestAPI_TriggerRun_Inputs(t *testing.T) {
+	h := setup(t)
+	if err := os.WriteFile(filepath.Join(config.GetString("workflows-dir"), "api-inputs.yaml"), []byte(inputWorkflow), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	rec, body := do(t, h, http.MethodGet, "/api/workflows/api-inputs")
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d", rec.Code)
+	}
+	if inputs, _ := body["inputs"].(map[string]interface{}); inputs["version"] == nil {
+		t.Errorf("expected declared inputs in the summary, got %v", body["inputs"])
+	}
+
+	rec, body = do(t, h, http.MethodPost, "/api/workflows/api-inputs/run?wait=true")
+	if rec.Code != http.StatusBadRequest {
+		t.Fatalf("expected 400 for a missing required input, got %d: %v", rec.Code, body)
+	}
+
+	rec, body = do(t, h, http.MethodPost, "/api/workflows/api-inputs/run?wait=true&version=1&typo=x")
+	if rec.Code != http.StatusBadRequest {
+		t.Fatalf("expected 400 for an undeclared input, got %d: %v", rec.Code, body)
+	}
+
+	req := httptest.NewRequest(http.MethodPost, "/api/workflows/api-inputs/run?wait=true", strings.NewReader(`{"version": 42, "env": "prod"}`))
+	req.Header.Set("Content-Type", "application/json")
+	rec = httptest.NewRecorder()
+	h.ServeHTTP(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d: %s", rec.Code, rec.Body.String())
+	}
+	var resp map[string]interface{}
+	_ = json.Unmarshal(rec.Body.Bytes(), &resp)
+	runID, _ := resp["run_id"].(string)
+
+	rec, detail := do(t, h, http.MethodGet, "/api/runs/"+runID)
+	if rec.Code != http.StatusOK {
+		t.Fatal(rec.Body.String())
+	}
+	run, _ := detail["run"].(map[string]interface{})
+	inputs, _ := run["inputs"].(map[string]interface{})
+	if inputs["version"] != "42" || inputs["env"] != "prod" {
+		t.Errorf("expected inputs on the recorded run, got %v", run["inputs"])
+	}
+	tasks, _ := detail["tasks"].([]interface{})
+	if len(tasks) != 1 || !strings.Contains(tasks[0].(map[string]interface{})["output"].(string), "prod/42") {
+		t.Errorf("task did not see the inputs: %v", tasks)
 	}
 }

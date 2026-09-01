@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"os"
+	"sort"
 	"time"
 
 	"github.com/spf13/cobra"
@@ -68,6 +69,17 @@ func showRunDetail(s *store.SQLiteStore, runID string) {
 	}
 	if run.Error != "" {
 		fmt.Printf("Error:    %s\n", run.Error)
+	}
+	if len(run.Inputs) > 0 {
+		names := make([]string, 0, len(run.Inputs))
+		for name := range run.Inputs {
+			names = append(names, name)
+		}
+		sort.Strings(names)
+		fmt.Println("Inputs:")
+		for _, name := range names {
+			fmt.Printf("  %s=%s\n", name, run.Inputs[name])
+		}
 	}
 
 	tasks, err := s.GetTaskExecutions(runID)

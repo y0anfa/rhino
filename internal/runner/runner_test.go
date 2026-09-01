@@ -6,6 +6,7 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
@@ -204,4 +205,56 @@ func TestHotReloader_RemovedWorkflowDropsRunner(t *testing.T) {
 	if manager.RunnerFor("gone") != nil {
 		t.Fatal("runner for the deleted workflow is still registered")
 	}
+}
+
+func TestWebhookHandler_PassesJSONBodyAsInputs(t *testing.T) {
+	target := filepath.Join(t.TempDir(), "inputs.txt")
+
+	w := models.NewWorkflow("wh-inputs", "webhook inputs")
+	w.SetTrigger(models.Trigger{Name: "t1", Type: models.TriggerWebhook})
+	w.Inputs = map[string]models.Input{"env": {Default: "staging"}, "version": {Required: true}}
+	w.AddTask(models.Task{
+		Name:     "write",
+		Provider: "file",
+		Params: map[string]interface{}{
+			"operation": "write",
+			"path":      target,
+			"content":   "{{input.env}}/{{input.version}}",
+		},
+	})
+	w.Order = [][]string{{"write"}}
+
+	webhookMutex.Lock()
+	webhookWorkflows[w.Name] = *w
+	webhookMutex.Unlock()
+	t.Cleanup(func() { UnregisterWebhookWorkflow(w.Name) })
+
+	// Missing required input is rejected before anything runs.
+	rec := httptest.NewRecorder()
+	webhookHandler(rec, httptest.NewRequest(http.MethodPost, "/webhook/wh-inputs", nil))
+	if rec.Code != http.StatusBadRequest {
+		t.Fatalf("expected 400 for a missing required input, got %d: %s", rec.Code, rec.Body.String())
+	}
+
+	// Body fields (plus undeclared extras from the external system) are accepted.
+	body := strings.NewReader(`{"version": "3.1", "ref": "refs/heads/main", "commits": [1, 2]}`)
+	req := httptest.NewRequest(http.MethodPost, "/webhook/wh-inputs?env=prod", body)
+	req.Header.Set("Content-Type", "application/json")
+	rec = httptest.NewRecorder()
+	webhookHandler(rec, req)
+	if rec.Code != http.StatusAccepted {
+		t.Fatalf("expected 202, got %d: %s", rec.Code, rec.Body.String())
+	}
+
+	deadline := time.Now().Add(3 * time.Second)
+	for time.Now().Before(deadline) {
+		if data, err := os.ReadFile(target); err == nil {
+			if string(data) != "prod/3.1" {
+				t.Fatalf("unexpected inputs in task: %q", data)
+			}
+			return
+		}
+		time.Sleep(20 * time.Millisecond)
+	}
+	t.Fatal("workflow did not run with webhook inputs")
 }

@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"net/http"
 	"os"
 	"strings"
@@ -70,12 +71,13 @@ func (s *Server) handleWorkflows(w http.ResponseWriter, r *http.Request) {
 
 // workflowSummary is the API view of a workflow definition.
 type workflowSummary struct {
-	Name        string          `json:"name"`
-	Description string          `json:"description"`
-	Trigger     models.Trigger  `json:"trigger"`
-	Settings    models.Settings `json:"settings"`
-	Tasks       []taskSummary   `json:"tasks"`
-	Order       [][]string      `json:"order"`
+	Name        string                  `json:"name"`
+	Description string                  `json:"description"`
+	Trigger     models.Trigger          `json:"trigger"`
+	Settings    models.Settings         `json:"settings"`
+	Inputs      map[string]models.Input `json:"inputs,omitempty"`
+	Tasks       []taskSummary           `json:"tasks"`
+	Order       [][]string              `json:"order"`
 }
 
 type taskSummary struct {
@@ -133,6 +135,7 @@ func summarize(wf models.Workflow) workflowSummary {
 		Description: wf.Description,
 		Trigger:     wf.Trigger,
 		Settings:    wf.Settings,
+		Inputs:      wf.Inputs,
 		Order:       wf.Order,
 		Tasks:       make([]taskSummary, 0, len(wf.Tasks)),
 	}
@@ -157,11 +160,21 @@ func (s *Server) triggerRun(w http.ResponseWriter, r *http.Request, wf models.Wo
 		return
 	}
 
+	inputs, err := requestInputs(r)
+	if err != nil {
+		jsonError(w, err.Error(), http.StatusBadRequest)
+		return
+	}
+	if err := wf.CheckInputs(inputs, true); err != nil {
+		jsonError(w, err.Error(), http.StatusBadRequest)
+		return
+	}
+
 	runID := store.NewID()
 	wait := r.URL.Query().Get("wait") == "true"
 
 	if wait {
-		ctx := models.WithRunID(r.Context(), runID)
+		ctx := models.WithInputs(models.WithRunID(r.Context(), runID), inputs)
 		_, err := wf.Run(ctx)
 		if errors.Is(err, models.ErrTooManyRuns) {
 			jsonError(w, err.Error(), http.StatusTooManyRequests)
@@ -176,7 +189,7 @@ func (s *Server) triggerRun(w http.ResponseWriter, r *http.Request, wf models.Wo
 		return
 	}
 
-	ctx := models.WithRunID(context.WithoutCancel(r.Context()), runID)
+	ctx := models.WithInputs(models.WithRunID(context.WithoutCancel(r.Context()), runID), inputs)
 	go func() {
 		if _, err := wf.Run(ctx); err != nil {
 			logger.Error("workflow execution failed", zap.String("workflow", wf.Name), zap.Error(err))
@@ -190,6 +203,39 @@ func (s *Server) triggerRun(w http.ResponseWriter, r *http.Request, wf models.Wo
 		"run_id":   runID,
 		"status":   "triggered",
 	})
+}
+
+// maxRunBody bounds the JSON inputs accepted on a run request.
+const maxRunBody = 1 << 20
+
+// requestInputs reads inputs from query parameters (except the API's own
+// "wait") and from a JSON object body; body fields win.
+func requestInputs(r *http.Request) (map[string]string, error) {
+	inputs := make(map[string]string)
+	for key, values := range r.URL.Query() {
+		if key == "wait" || len(values) == 0 {
+			continue
+		}
+		inputs[key] = values[0]
+	}
+	if r.Body == nil {
+		return inputs, nil
+	}
+	body, err := io.ReadAll(io.LimitReader(r.Body, maxRunBody+1))
+	if err != nil {
+		return nil, fmt.Errorf("failed to read request body: %w", err)
+	}
+	if len(body) > maxRunBody {
+		return nil, fmt.Errorf("request body exceeds %d bytes", maxRunBody)
+	}
+	fromBody, err := models.InputsFromJSON(body)
+	if err != nil {
+		return nil, err
+	}
+	for k, v := range fromBody {
+		inputs[k] = v
+	}
+	return inputs, nil
 }
 
 func (s *Server) handleRuns(w http.ResponseWriter, r *http.Request) {

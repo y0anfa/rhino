@@ -104,6 +104,41 @@ Every task is validated up front: names must be unique, every task must appear
 exactly once in `order` (or use `depends-on`), and timeouts, backoff settings,
 and conditions are checked before anything runs.
 
+## Workflow inputs
+
+Workflows can declare inputs and receive values when they are triggered:
+
+```yaml
+inputs:
+    env:
+        description: Target environment
+        default: staging
+    version:
+        required: true
+tasks:
+  - name: announce
+    provider: shell
+    params:
+        command: "echo"
+        args: ["Deploying {{input.version}} to {{input.env}}"]
+```
+
+Values come from wherever the run starts, and are validated before anything
+executes: a missing required input or an unknown name fails fast.
+
+```bash
+./rhino run deploy --input version=1.2.3 --input env=prod
+curl -X POST localhost:8888/webhook/deploy -H 'Content-Type: application/json' -d '{"version": "1.2.3"}'
+curl -X POST 'localhost:8888/webhook/deploy?version=1.2.3&env=prod'
+curl -X POST localhost:9090/api/workflows/deploy/run -d '{"version": "1.2.3"}'
+```
+
+Webhook payloads may carry extra fields (they are ignored), nested JSON is
+passed as a JSON string, and a non-JSON body is exposed as `{{input.body}}`
+when declared. A parent workflow passes inputs to a child with the `workflow`
+provider's `inputs` param. Inputs are recorded on the run and shown by
+`rhino history <run-id>`.
+
 ## Conditions and templates
 
 Tasks can be gated on the outcome of earlier tasks:
@@ -114,7 +149,7 @@ condition: "{{task.build.status}} == success"   # also: != , and the literals al
 
 Params and notification messages can reference `{{task.NAME.output}}`,
 `{{task.NAME.metadata.KEY}}`, `{{env.VAR}}`, `{{secret.NAME}}`,
-`{{workflow.name}}`, `{{run.id}}`, and, in failure notifications,
+`{{workflow.name}}`, `{{input.NAME}}`, `{{run.id}}`, and, in failure notifications,
 `{{workflow.error}}`. Shell tasks expose `exit_code` as metadata, and a failed
 command's stderr is included in the task error.
 
@@ -148,7 +183,7 @@ respond with the `run_id` of the run they started.
 ## Commands
 
 - `rhino runner` - Start the workflow runner daemon
-- `rhino run <workflow>` - Manually run a specific workflow
+- `rhino run <workflow> [--input k=v]` - Manually run a specific workflow
 - `rhino list` - List all available workflows
 - `rhino describe <workflow>` - Show workflow details
 - `rhino validate <workflow>` - Validate a workflow without running it
