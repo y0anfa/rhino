@@ -2,8 +2,10 @@ package providers
 
 import (
 	"context"
+	"errors"
 	"strings"
 	"testing"
+	"time"
 )
 
 func TestShellProvider_Name(t *testing.T) {
@@ -35,14 +37,13 @@ func TestShellProvider_Validate_MissingCommand(t *testing.T) {
 	}
 }
 
-func TestShellProvider_Validate_MissingArgs(t *testing.T) {
+func TestShellProvider_Validate_ArgsOptional(t *testing.T) {
 	p := &ShellProvider{}
 	args := map[string]interface{}{
 		"command": "echo",
 	}
-	err := p.Validate(args)
-	if err == nil || !strings.Contains(err.Error(), "missing required parameter 'args'") {
-		t.Errorf("expected missing args error, got: %v", err)
+	if err := p.Validate(args); err != nil {
+		t.Errorf("expected args to be optional, got: %v", err)
 	}
 }
 
@@ -134,5 +135,46 @@ func TestShellProvider_Run_Failure(t *testing.T) {
 	_, err := p.Run(context.Background(), args)
 	if err == nil {
 		t.Error("expected error from failing command")
+	}
+}
+
+func TestShellProvider_Run_WithoutArgs(t *testing.T) {
+	p := &ShellProvider{}
+	res, err := p.Run(context.Background(), map[string]interface{}{"command": "true"})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if res.Metadata["exit_code"] != "0" {
+		t.Errorf("expected exit_code metadata '0', got %q", res.Metadata["exit_code"])
+	}
+}
+
+func TestShellProvider_Run_FailureIncludesStderr(t *testing.T) {
+	p := &ShellProvider{}
+	_, err := p.Run(context.Background(), map[string]interface{}{
+		"command": "sh",
+		"args":    []interface{}{"-c", "echo boom >&2; exit 3"},
+	})
+	if err == nil {
+		t.Fatal("expected an error for a non-zero exit")
+	}
+	if !strings.Contains(err.Error(), "boom") {
+		t.Errorf("expected stderr in error, got: %v", err)
+	}
+	if !strings.Contains(err.Error(), "exit status 3") {
+		t.Errorf("expected exit status in error, got: %v", err)
+	}
+}
+
+func TestShellProvider_Run_TimeoutReportsDeadline(t *testing.T) {
+	p := &ShellProvider{}
+	ctx, cancel := context.WithTimeout(context.Background(), 50*time.Millisecond)
+	defer cancel()
+	_, err := p.Run(ctx, map[string]interface{}{
+		"command": "sleep",
+		"args":    []interface{}{"5"},
+	})
+	if !errors.Is(err, context.DeadlineExceeded) {
+		t.Errorf("expected context.DeadlineExceeded, got: %v", err)
 	}
 }

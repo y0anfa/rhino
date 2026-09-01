@@ -10,7 +10,13 @@ import (
 	"context"
 	"fmt"
 	"os/exec"
+	"strconv"
+	"strings"
 )
+
+// maxStderrInError caps how much of a failed command's stderr is attached to
+// the returned error so a noisy process cannot flood logs or history.
+const maxStderrInError = 4096
 
 // ShellProvider is the shell provider.
 type ShellProvider struct{}
@@ -20,13 +26,11 @@ func (p *ShellProvider) Name() string {
 	return "shell"
 }
 
-// Validate validates the provider arguments.
+// Validate validates the provider arguments. "command" is required; "args" is
+// an optional list of strings.
 func (p *ShellProvider) Validate(args map[string]interface{}) error {
-	requiredParams := []string{"command", "args"}
-	for _, param := range requiredParams {
-		if args[param] == nil || args[param] == "" {
-			return fmt.Errorf("shell provider validation failed: missing required parameter '%s'", param)
-		}
+	if args["command"] == nil || args["command"] == "" {
+		return fmt.Errorf("shell provider validation failed: missing required parameter 'command'")
 	}
 
 	for key, value := range args {
@@ -39,10 +43,14 @@ func (p *ShellProvider) Validate(args map[string]interface{}) error {
 				return fmt.Errorf("shell provider validation failed: command cannot be empty")
 			}
 		case "args":
-			if _, ok := value.([]interface{}); !ok {
+			if value == nil {
+				continue
+			}
+			list, ok := value.([]interface{})
+			if !ok {
 				return fmt.Errorf("shell provider validation failed: args must be a list, got %T", value)
 			}
-			for _, arg := range value.([]interface{}) {
+			for _, arg := range list {
 				if _, ok := arg.(string); !ok {
 					return fmt.Errorf("shell provider validation failed: args must be strings, got %T", arg)
 				}
@@ -54,12 +62,17 @@ func (p *ShellProvider) Validate(args map[string]interface{}) error {
 	return nil
 }
 
-// Run runs the provider with the given arguments.
+// Run runs the provider with the given arguments. Stdout becomes the task
+// output; the exit code is exposed as metadata, and stderr is attached to the
+// error when the command fails.
 func (p *ShellProvider) Run(ctx context.Context, args map[string]interface{}) (*TaskResult, error) {
 	command := args["command"].(string)
-	argsSlice := make([]string, len(args["args"].([]interface{})))
-	for i, arg := range args["args"].([]interface{}) {
-		argsSlice[i] = arg.(string)
+	var argsSlice []string
+	if raw, ok := args["args"].([]interface{}); ok {
+		argsSlice = make([]string, len(raw))
+		for i, arg := range raw {
+			argsSlice[i] = arg.(string)
+		}
 	}
 
 	var stdout bytes.Buffer
@@ -67,10 +80,28 @@ func (p *ShellProvider) Run(ctx context.Context, args map[string]interface{}) (*
 	cmd := exec.CommandContext(ctx, command, argsSlice...) // #nosec: G204
 	cmd.Stdout = &stdout
 	cmd.Stderr = &stderr
-	if err := cmd.Run(); err != nil {
-		return nil, err
+	runErr := cmd.Run()
+
+	metadata := map[string]string{}
+	if cmd.ProcessState != nil {
+		metadata["exit_code"] = strconv.Itoa(cmd.ProcessState.ExitCode())
 	}
-	return &TaskResult{Output: stdout.String()}, nil
+
+	if runErr != nil {
+		// A killed process reports "signal: killed"; the deadline is the real cause.
+		if ctxErr := ctx.Err(); ctxErr != nil {
+			return nil, fmt.Errorf("%w (%v)", ctxErr, runErr)
+		}
+		msg := strings.TrimSpace(stderr.String())
+		if len(msg) > maxStderrInError {
+			msg = msg[:maxStderrInError] + "..."
+		}
+		if msg != "" {
+			return nil, fmt.Errorf("%w: %s", runErr, msg)
+		}
+		return nil, runErr
+	}
+	return &TaskResult{Output: stdout.String(), Metadata: metadata}, nil
 }
 
 // Register registers the shell provider.
