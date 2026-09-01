@@ -25,11 +25,12 @@ var runCmd = &cobra.Command{
 			os.Exit(1)
 		}
 
+		if err := w.Validate(); err != nil {
+			fmt.Fprintf(os.Stderr, "Validation failed: %v\n", err)
+			os.Exit(1)
+		}
+
 		if dryRun {
-			if err := w.Validate(); err != nil {
-				fmt.Fprintf(os.Stderr, "Validation failed: %v\n", err)
-				os.Exit(1)
-			}
 			fmt.Printf("Workflow: %s\n", w.Name)
 			fmt.Printf("Settings: max-tries=%d, timeout=%s\n", w.Settings.MaxTries, w.Settings.Timeout)
 			fmt.Println("\nExecution plan:")

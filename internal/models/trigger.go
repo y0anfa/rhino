@@ -10,14 +10,14 @@ const (
 )
 
 type Trigger struct {
-	Name        string      `yaml:"name"`
-	Description string      `yaml:"description"`
-	Type        TriggerType `yaml:"type"`
-	Schedule    string      `yaml:"schedule,omitempty"`
-	WatchPath    string   `yaml:"watch-path,omitempty"`
-	WatchPattern string   `yaml:"watch-pattern,omitempty"`
-	WatchEvents  []string `yaml:"watch-events,omitempty"`
-	Debounce    string      `yaml:"debounce,omitempty"`
+	Name         string      `yaml:"name" json:"name"`
+	Description  string      `yaml:"description" json:"description,omitempty"`
+	Type         TriggerType `yaml:"type" json:"type"`
+	Schedule     string      `yaml:"schedule,omitempty" json:"schedule,omitempty"`
+	WatchPath    string      `yaml:"watch-path,omitempty" json:"watch_path,omitempty"`
+	WatchPattern string      `yaml:"watch-pattern,omitempty" json:"watch_pattern,omitempty"`
+	WatchEvents  []string    `yaml:"watch-events,omitempty" json:"watch_events,omitempty"`
+	Debounce     string      `yaml:"debounce,omitempty" json:"debounce,omitempty"`
 }
 
 func NewTrigger(name string, desc string, triggertype TriggerType, schedule string) *Trigger {

@@ -2,16 +2,17 @@ package models
 
 import (
 	"context"
+	"crypto/sha256"
+	"errors"
 	"fmt"
 	"math"
 	"math/rand"
 	"os"
 	"path/filepath"
+	"regexp"
 	"strings"
 	"sync"
 	"time"
-
-	"crypto/sha256"
 
 	"github.com/robfig/cron/v3"
 	"github.com/y0anfa/rhino/internal/config"
@@ -28,9 +29,9 @@ type Workflow struct {
 	Description   string              `yaml:"description"`
 	Settings      Settings            `yaml:"settings"`
 	Notifications *NotificationConfig `yaml:"notifications,omitempty"`
-	Trigger     Trigger    `yaml:"trigger"`
-	Tasks       []Task     `yaml:"tasks"`
-	Order       [][]string `yaml:"order"`
+	Trigger       Trigger             `yaml:"trigger"`
+	Tasks         []Task              `yaml:"tasks"`
+	Order         [][]string          `yaml:"order"`
 }
 
 func NewWorkflow(name string, desc string) *Workflow {
@@ -132,11 +133,33 @@ func (w *Workflow) Validate() error {
 	if _, err := time.ParseDuration(w.Settings.Timeout); err != nil {
 		return fmt.Errorf("workflow validation failed: invalid timeout format '%s': %w", w.Settings.Timeout, err)
 	}
+	if err := w.Settings.validateRetry(); err != nil {
+		return fmt.Errorf("workflow validation failed: %w", err)
+	}
+	if w.Settings.MaxConcurrentRuns < 0 {
+		return fmt.Errorf("workflow validation failed: max-concurrent-runs must be >= 0, got %d", w.Settings.MaxConcurrentRuns)
+	}
+	if w.Settings.MaxOutputSize < 0 {
+		return fmt.Errorf("workflow validation failed: max-output-size must be >= 0, got %d", w.Settings.MaxOutputSize)
+	}
 	if w.Trigger.Name == "" {
 		return fmt.Errorf("workflow validation failed: trigger name is empty")
 	}
 	if w.Trigger.Type == "" {
 		return fmt.Errorf("workflow validation failed: trigger type is empty")
+	}
+	switch w.Trigger.Type {
+	case TriggerManual, TriggerScheduled, TriggerWebhook, TriggerWatch:
+	default:
+		return fmt.Errorf("workflow validation failed: unknown trigger type '%s'", w.Trigger.Type)
+	}
+	if w.Trigger.Type == TriggerWatch && w.Trigger.WatchPath == "" {
+		return fmt.Errorf("workflow validation failed: watch-path is empty for watch trigger")
+	}
+	if w.Trigger.Debounce != "" {
+		if _, err := time.ParseDuration(w.Trigger.Debounce); err != nil {
+			return fmt.Errorf("workflow validation failed: invalid debounce '%s': %w", w.Trigger.Debounce, err)
+		}
 	}
 	if w.Trigger.Type == TriggerScheduled && w.Trigger.Schedule == "" {
 		return fmt.Errorf("workflow validation failed: trigger schedule is empty for cron trigger")
@@ -149,9 +172,25 @@ func (w *Workflow) Validate() error {
 	if len(w.Tasks) == 0 {
 		return fmt.Errorf("workflow validation failed: tasks list is empty")
 	}
+	seenTasks := make(map[string]bool, len(w.Tasks))
 	for _, t := range w.Tasks {
 		if t.Name == "" {
 			return fmt.Errorf("workflow validation failed: task name is empty")
+		}
+		if seenTasks[t.Name] {
+			return fmt.Errorf("workflow validation failed: duplicate task name '%s'", t.Name)
+		}
+		seenTasks[t.Name] = true
+		if t.MaxTries < 0 {
+			return fmt.Errorf("workflow validation failed: task '%s' max-tries must be >= 0, got %d", t.Name, t.MaxTries)
+		}
+		if t.Timeout != "" {
+			if _, err := time.ParseDuration(t.Timeout); err != nil {
+				return fmt.Errorf("workflow validation failed: task '%s' has invalid timeout '%s': %w", t.Name, t.Timeout, err)
+			}
+		}
+		if err := validateCondition(t.Condition); err != nil {
+			return fmt.Errorf("workflow validation failed: task '%s': %w", t.Name, err)
 		}
 		if t.Provider == "" {
 			return fmt.Errorf("workflow validation failed: task '%s' provider is empty", t.Name)
@@ -188,6 +227,7 @@ func (w *Workflow) Validate() error {
 		if len(w.Order) == 0 {
 			return fmt.Errorf("workflow validation failed: order is empty")
 		}
+		ordered := make(map[string]bool, len(w.Tasks))
 		for _, group := range w.Order {
 			if len(group) == 0 {
 				return fmt.Errorf("workflow validation failed: order group is empty")
@@ -197,6 +237,15 @@ func (w *Workflow) Validate() error {
 				if task == nil {
 					return fmt.Errorf("workflow validation failed: task '%s' not found in order", taskName)
 				}
+				if ordered[taskName] {
+					return fmt.Errorf("workflow validation failed: task '%s' appears more than once in order", taskName)
+				}
+				ordered[taskName] = true
+			}
+		}
+		for _, t := range w.Tasks {
+			if !ordered[t.Name] {
+				return fmt.Errorf("workflow validation failed: task '%s' is not listed in order", t.Name)
 			}
 		}
 	}
@@ -274,7 +323,14 @@ func (w *Workflow) buildDAGOrder() ([][]string, error) {
 	return order, nil
 }
 
-func (w *Workflow) sendNotifications(runErr error) {
+// notificationTimeout bounds each notification delivery so a hung channel
+// cannot keep a finished run alive indefinitely.
+const notificationTimeout = 30 * time.Second
+
+// sendNotifications delivers on-success / on-failure channels. Params are
+// resolved against the run's template context, so they can reference task
+// outputs, {{run.id}}, and {{workflow.error}}.
+func (w *Workflow) sendNotifications(runErr error, tmplCtx *template.Context) {
 	if w.Notifications == nil {
 		return
 	}
@@ -285,6 +341,7 @@ func (w *Workflow) sendNotifications(runErr error) {
 	} else {
 		channels = w.Notifications.OnFailure
 	}
+	tmplCtx.SetRunError(runErr)
 
 	for _, ch := range channels {
 		provider, err := providers.Get(ch.Provider)
@@ -293,11 +350,12 @@ func (w *Workflow) sendNotifications(runErr error) {
 				zap.String("provider", ch.Provider), zap.Error(err))
 			continue
 		}
-		// Resolve template expressions in notification params
-		resolvedParams := template.ResolveParams(ch.Params,
-			template.NewContext(w.Name, w.Description, w.Trigger.Name, string(w.Trigger.Type)))
+		resolvedParams := template.ResolveParams(ch.Params, tmplCtx)
 
-		if _, err := provider.Run(context.Background(), resolvedParams); err != nil {
+		ctx, cancel := context.WithTimeout(context.Background(), notificationTimeout)
+		_, err = provider.Run(ctx, resolvedParams)
+		cancel()
+		if err != nil {
 			logger.Error("notification failed",
 				zap.String("provider", ch.Provider), zap.Error(err))
 		}
@@ -430,6 +488,35 @@ func (w *Workflow) retryDelay(attempt int) time.Duration {
 	return delay
 }
 
+// conditionStatusRef matches "{{task.NAME.status}}" references inside a condition.
+var conditionStatusRef = regexp.MustCompile(`\{\{\s*task\.([^.\s}]+)\.status\s*\}\}`)
+
+// validateCondition accepts "", "always", "never", or a single comparison of a
+// task status reference: "{{task.X.status}} == success" / "!= failed".
+func validateCondition(cond string) error {
+	cond = strings.TrimSpace(cond)
+	if cond == "" || cond == "always" || cond == "never" {
+		return nil
+	}
+	if !conditionStatusRef.MatchString(cond) {
+		return fmt.Errorf("invalid condition '%s': expected always, never, or a {{task.NAME.status}} comparison", cond)
+	}
+	op := "=="
+	if strings.Contains(cond, "!=") {
+		op = "!="
+	}
+	parts := strings.SplitN(cond, op, 2)
+	if len(parts) != 2 {
+		return fmt.Errorf("invalid condition '%s': expected '<lhs> == <rhs>' or '<lhs> != <rhs>'", cond)
+	}
+	rhs := strings.TrimSpace(parts[1])
+	switch rhs {
+	case "success", "failed", "skipped":
+		return nil
+	}
+	return fmt.Errorf("invalid condition '%s': status must be success, failed, or skipped", cond)
+}
+
 func (w *Workflow) evaluateCondition(t *Task, taskStatuses map[string]string) bool {
 	cond := strings.TrimSpace(t.Condition)
 	if cond == "" {
@@ -442,16 +529,18 @@ func (w *Workflow) evaluateCondition(t *Task, taskStatuses map[string]string) bo
 		return false
 	}
 
-	// Parse "{{task.TASKNAME.status}} == success|failed"
-	if strings.Contains(cond, ".status}}") {
-		for name, status := range taskStatuses {
-			placeholder := fmt.Sprintf("{{task.%s.status}}", name)
-			cond = strings.ReplaceAll(cond, placeholder, status)
-		}
-		parts := strings.SplitN(cond, "==", 2)
-		if len(parts) == 2 {
-			return strings.TrimSpace(parts[0]) == strings.TrimSpace(parts[1])
-		}
+	// Resolve "{{task.TASKNAME.status}}"; a task that never ran has no status,
+	// so the reference resolves to an empty string.
+	cond = conditionStatusRef.ReplaceAllStringFunc(cond, func(match string) string {
+		name := conditionStatusRef.FindStringSubmatch(match)[1]
+		return taskStatuses[name]
+	})
+
+	if parts := strings.SplitN(cond, "!=", 2); len(parts) == 2 {
+		return strings.TrimSpace(parts[0]) != strings.TrimSpace(parts[1])
+	}
+	if parts := strings.SplitN(cond, "==", 2); len(parts) == 2 {
+		return strings.TrimSpace(parts[0]) == strings.TrimSpace(parts[1])
 	}
 
 	return true
@@ -471,6 +560,139 @@ func (w *Workflow) resolveOrder() ([][]string, error) {
 	return nil, fmt.Errorf("no execution order: set 'order' or 'depends-on'")
 }
 
+// runIDKey carries a caller-chosen run ID so the caller can hand it out (for
+// example in an HTTP response) before the run finishes.
+type runIDKey struct{}
+
+// WithRunID returns a context that makes Run record the workflow run under the
+// given ID instead of generating one.
+func WithRunID(ctx context.Context, id string) context.Context {
+	return context.WithValue(ctx, runIDKey{}, id)
+}
+
+func runIDFromContext(ctx context.Context) string {
+	id, _ := ctx.Value(runIDKey{}).(string)
+	return id
+}
+
+// ErrTooManyRuns is returned when a workflow already has max-concurrent-runs
+// executions in flight.
+var ErrTooManyRuns = errors.New("max concurrent runs reached")
+
+var (
+	runSlotsMu sync.Mutex
+	runSlots   = make(map[string]int)
+)
+
+// acquireRunSlot reserves an execution slot for the workflow. It fails without
+// blocking when the limit is reached, so overlapping cron ticks or webhook
+// bursts are dropped instead of piling up behind each other.
+func acquireRunSlot(name string, limit int) (release func(), err error) {
+	if limit <= 0 {
+		return func() {}, nil
+	}
+	runSlotsMu.Lock()
+	defer runSlotsMu.Unlock()
+	if runSlots[name] >= limit {
+		return nil, fmt.Errorf("workflow '%s': %w (limit %d)", name, ErrTooManyRuns, limit)
+	}
+	runSlots[name]++
+	var once sync.Once
+	return func() {
+		once.Do(func() {
+			runSlotsMu.Lock()
+			defer runSlotsMu.Unlock()
+			if runSlots[name] <= 1 {
+				delete(runSlots, name)
+				return
+			}
+			runSlots[name]--
+		})
+	}, nil
+}
+
+// truncateOutput enforces max-output-size on a task result so a chatty task
+// cannot bloat memory, templates, or the history database.
+func (w *Workflow) truncateOutput(res *providers.TaskResult) {
+	limit := w.Settings.MaxOutputSize
+	if res == nil || limit <= 0 || len(res.Output) <= limit {
+		return
+	}
+	res.Output = res.Output[:limit]
+	if res.Metadata == nil {
+		res.Metadata = make(map[string]string)
+	}
+	res.Metadata["output_truncated"] = "true"
+}
+
+// taskOutcome is what a single task attempt sequence produced, used both for
+// the in-memory results and the persisted execution record.
+type taskOutcome struct {
+	result   *providers.TaskResult
+	err      error
+	attempts int
+	started  time.Time
+	finished time.Time
+}
+
+// runTask executes a task with retries and per-attempt timeouts.
+func (w *Workflow) runTask(ctx context.Context, t *Task, maxTries int, timeout time.Duration, params map[string]interface{}) (out taskOutcome) {
+	out.started = time.Now()
+	// Named result: the deferred stamp must land on the value being returned.
+	defer func() { out.finished = time.Now() }()
+
+	for try := 0; try < maxTries; try++ {
+		if try > 0 {
+			delay := w.retryDelay(try - 1)
+			if delay > 0 {
+				timer := time.NewTimer(delay)
+				select {
+				case <-ctx.Done():
+					timer.Stop()
+					out.err = ctx.Err()
+					return out
+				case <-timer.C:
+				}
+			}
+		}
+		out.attempts++
+
+		taskCtx, cancel := context.WithTimeout(ctx, timeout)
+		ch := make(chan taskRunResult, 1)
+		go func() {
+			defer func() {
+				if r := recover(); r != nil {
+					ch <- taskRunResult{err: fmt.Errorf("task '%s' panicked: %v", t.Name, r)}
+				}
+			}()
+			res, err := t.RunWithParams(taskCtx, params)
+			ch <- taskRunResult{result: res, err: err}
+		}()
+
+		select {
+		case <-taskCtx.Done():
+			out.err = taskCtx.Err()
+			logger.Error("task execution failed: timeout reached", zap.String("task", t.Name), zap.Error(out.err))
+		case tr := <-ch:
+			out.err = tr.err
+			out.result = tr.result
+		}
+		cancel()
+
+		if out.err == nil {
+			logger.Info("task execution succeeded", zap.String("task", t.Name))
+			return out
+		}
+		logger.Error("task execution failed", zap.String("task", t.Name), zap.Error(out.err), zap.Int("attempt", out.attempts))
+
+		// A cancelled workflow must not burn its remaining attempts.
+		if ctx.Err() != nil {
+			return out
+		}
+	}
+	return out
+}
+
 func (w *Workflow) Run(ctx context.Context) (map[string]*providers.TaskResult, error) {
 	results := make(map[string]*providers.TaskResult)
 	var resultsMu sync.Mutex
@@ -483,13 +705,25 @@ func (w *Workflow) Run(ctx context.Context) (map[string]*providers.TaskResult, e
 		return results, fmt.Errorf("workflow '%s' failed: %w", w.Name, orderErr)
 	}
 
+	release, err := acquireRunSlot(w.Name, w.Settings.MaxConcurrentRuns)
+	if err != nil {
+		return results, err
+	}
+	defer release()
+
+	runID := runIDFromContext(ctx)
+	if runID == "" {
+		runID = store.NewID()
+	}
+	tmplCtx.RunID = runID
+
 	// Record run in history store
 	var runRecord *store.WorkflowRun
 	if s := store.Global(); s != nil {
 		yamlBytes, _ := yaml.Marshal(w)
 		hash := fmt.Sprintf("%x", sha256.Sum256(yamlBytes))
 		runRecord = &store.WorkflowRun{
-			ID:           store.NewID(),
+			ID:           runID,
 			WorkflowName: w.Name,
 			WorkflowHash: hash[:16],
 			WorkflowYAML: string(yamlBytes),
@@ -499,26 +733,59 @@ func (w *Workflow) Run(ctx context.Context) (map[string]*providers.TaskResult, e
 		}
 		if err := s.SaveRun(runRecord); err != nil {
 			logger.Error("failed to save run record", zap.Error(err))
+			runRecord = nil
+		}
+	}
+
+	recordTask := func(t *Task, status store.TaskStatus, out taskOutcome) {
+		if runRecord == nil {
+			return
+		}
+		s := store.Global()
+		if s == nil {
+			return
+		}
+		exec := &store.TaskExecution{
+			ID:          store.NewID(),
+			RunID:       runRecord.ID,
+			TaskName:    t.Name,
+			Provider:    t.Provider,
+			Status:      status,
+			StartedAt:   out.started,
+			CompletedAt: out.finished,
+			DurationMs:  out.finished.Sub(out.started).Milliseconds(),
+		}
+		if out.attempts > 0 {
+			exec.Retries = out.attempts - 1
+		}
+		if out.result != nil {
+			exec.Output = out.result.Output
+		}
+		if out.err != nil {
+			exec.Error = out.err.Error()
+		}
+		if err := s.SaveTaskExecution(exec); err != nil {
+			logger.Error("failed to save task execution", zap.String("task", t.Name), zap.Error(err))
 		}
 	}
 
 	finishRun := func(runErr error) {
-		if runRecord == nil {
-			return
-		}
-		if s := store.Global(); s != nil {
-			runRecord.CompletedAt = time.Now()
-			if runErr != nil {
-				runRecord.Status = store.RunStatusFailed
-				runRecord.Error = runErr.Error()
-			} else {
-				runRecord.Status = store.RunStatusSuccess
+		if runRecord != nil {
+			if s := store.Global(); s != nil {
+				runRecord.CompletedAt = time.Now()
+				if runErr != nil {
+					runRecord.Status = store.RunStatusFailed
+					runRecord.Error = runErr.Error()
+				} else {
+					runRecord.Status = store.RunStatusSuccess
+				}
+				if err := s.UpdateRun(runRecord); err != nil {
+					logger.Error("failed to update run record", zap.Error(err))
+				}
 			}
-			s.UpdateRun(runRecord)
 		}
 
-		// Send notifications
-		w.sendNotifications(runErr)
+		w.sendNotifications(runErr, tmplCtx)
 	}
 
 	for _, group := range order {
@@ -539,8 +806,11 @@ func (w *Workflow) Run(ctx context.Context) (map[string]*providers.TaskResult, e
 				finishRun(runErr)
 				return results, runErr
 			}
-			if task.MaxTries == 0 {
-				task.MaxTries = w.Settings.MaxTries
+			// Resolve per-task settings locally: the Task slice is shared by
+			// concurrent runs of the same workflow, so it must not be mutated.
+			maxTries := task.MaxTries
+			if maxTries <= 0 {
+				maxTries = w.Settings.MaxTries
 			}
 
 			// Evaluate condition
@@ -552,6 +822,8 @@ func (w *Workflow) Run(ctx context.Context) (map[string]*providers.TaskResult, e
 				statusMu.Lock()
 				taskStatuses[task.Name] = "skipped"
 				statusMu.Unlock()
+				now := time.Now()
+				recordTask(task, store.TaskStatusSkipped, taskOutcome{started: now, finished: now})
 				continue
 			}
 
@@ -564,83 +836,39 @@ func (w *Workflow) Run(ctx context.Context) (map[string]*providers.TaskResult, e
 
 			wg.Add(1)
 
-			go func(t *Task, timeout time.Duration) {
+			go func(t *Task, maxTries int, timeout time.Duration) {
 				defer wg.Done()
 
 				// Resolve template expressions in params
 				resolvedParams := template.ResolveParams(t.Params, tmplCtx)
 
-				var lastErr error
-			retries:
-				for try := 0; try < t.MaxTries; try++ {
-					if try > 0 {
-						delay := w.retryDelay(try - 1)
-						if delay > 0 {
-							timer := time.NewTimer(delay)
-							select {
-							case <-ctx.Done():
-								timer.Stop()
-								lastErr = ctx.Err()
-								break retries
-							case <-timer.C:
-							}
-						}
-					}
+				out := w.runTask(ctx, t, maxTries, timeout, resolvedParams)
 
-					taskCtx, cancel := context.WithTimeout(ctx, timeout)
-
-					ch := make(chan taskRunResult, 1)
-					go func() {
-						defer func() {
-							if r := recover(); r != nil {
-								ch <- taskRunResult{err: fmt.Errorf("task '%s' panicked: %v", t.Name, r)}
-							}
-						}()
-						res, err := t.RunWithParams(taskCtx, resolvedParams)
-						ch <- taskRunResult{result: res, err: err}
-					}()
-
-					select {
-					case <-taskCtx.Done():
-						lastErr = taskCtx.Err()
-						logger.Error("task execution failed: timeout reached", zap.String("task", t.Name), zap.Error(lastErr))
-					case tr := <-ch:
-						lastErr = tr.err
-						if lastErr != nil {
-							logger.Error("task execution failed", zap.String("task", t.Name), zap.Error(lastErr))
-						} else {
-							logger.Info("task execution succeeded", zap.String("task", t.Name))
-							resultsMu.Lock()
-							results[t.Name] = tr.result
-							tmplCtx.SetTaskResult(t.Name, tr.result)
-							resultsMu.Unlock()
-						}
-					}
-
-					cancel()
-
-					if lastErr == nil {
-						break
-					}
+				status := store.TaskStatusSuccess
+				if out.err == nil {
+					w.truncateOutput(out.result)
+					resultsMu.Lock()
+					results[t.Name] = out.result
+					tmplCtx.SetTaskResult(t.Name, out.result)
+					resultsMu.Unlock()
+				} else {
+					status = store.TaskStatusFailed
 				}
+				recordTask(t, status, out)
 
 				statusMu.Lock()
-				if lastErr != nil {
-					taskStatuses[t.Name] = "failed"
-				} else {
-					taskStatuses[t.Name] = "success"
-				}
+				taskStatuses[t.Name] = string(status)
 				statusMu.Unlock()
 
-				if lastErr != nil {
-					logger.Error("task execution failed: max retries reached", zap.String("task", t.Name), zap.Error(lastErr))
+				if out.err != nil {
+					logger.Error("task execution failed: max retries reached", zap.String("task", t.Name), zap.Error(out.err))
 					if !t.ContinueOnError {
 						mu.Lock()
-						errs = append(errs, fmt.Errorf("task '%s' failed: %w", t.Name, lastErr))
+						errs = append(errs, fmt.Errorf("task '%s' failed: %w", t.Name, out.err))
 						mu.Unlock()
 					}
 				}
-			}(task, timeout)
+			}(task, maxTries, timeout)
 		}
 
 		wg.Wait()
