@@ -179,3 +179,52 @@ func TestDeleteRunsBefore(t *testing.T) {
 		t.Errorf("expected 1 remaining run, got %d", len(runs))
 	}
 }
+
+func TestRunInputsRoundTrip(t *testing.T) {
+	s := testStore(t)
+	run := &WorkflowRun{
+		ID: "run-inputs", WorkflowName: "wf", Status: RunStatusRunning, StartedAt: time.Now(),
+		Inputs: map[string]string{"env": "prod", "version": "1.2.3"},
+	}
+	if err := s.SaveRun(run); err != nil {
+		t.Fatal(err)
+	}
+	got, err := s.GetRun("run-inputs")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.Inputs["env"] != "prod" || got.Inputs["version"] != "1.2.3" {
+		t.Errorf("inputs did not round-trip: %v", got.Inputs)
+	}
+	runs, err := s.ListRuns(RunFilter{})
+	if err != nil || len(runs) != 1 || runs[0].Inputs["env"] != "prod" {
+		t.Errorf("inputs missing from ListRuns: %v, %v", runs, err)
+	}
+}
+
+// A database created before the inputs column existed must be upgraded in place.
+func TestMigrate_AddsInputsColumnToOldSchema(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "old.db")
+	old, err := NewSQLiteStore(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := old.db.Exec(`ALTER TABLE workflow_runs DROP COLUMN inputs`); err != nil {
+		t.Fatalf("could not simulate old schema: %v", err)
+	}
+	old.Close()
+
+	s, err := NewSQLiteStore(path)
+	if err != nil {
+		t.Fatalf("reopening an old database failed: %v", err)
+	}
+	t.Cleanup(func() { s.Close() })
+	run := &WorkflowRun{ID: "r", WorkflowName: "wf", Status: RunStatusSuccess, StartedAt: time.Now(), Inputs: map[string]string{"a": "b"}}
+	if err := s.SaveRun(run); err != nil {
+		t.Fatalf("save after migration failed: %v", err)
+	}
+	got, err := s.GetRun("r")
+	if err != nil || got.Inputs["a"] != "b" {
+		t.Errorf("migrated column does not hold inputs: %v, %v", got, err)
+	}
+}

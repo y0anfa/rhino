@@ -6,7 +6,8 @@ import (
 )
 
 // WorkflowExecutor is set by the models package to avoid import cycles.
-var WorkflowExecutor func(ctx context.Context, name string) (map[string]*TaskResult, error)
+// Inputs are passed to the child workflow as its trigger-time input values.
+var WorkflowExecutor func(ctx context.Context, name string, inputs map[string]string) (map[string]*TaskResult, error)
 
 type WorkflowProvider struct{}
 
@@ -27,6 +28,18 @@ func (p *WorkflowProvider) Validate(args map[string]interface{}) error {
 			if _, ok := value.(bool); !ok {
 				return fmt.Errorf("workflow provider validation failed: async must be a boolean, got %T", value)
 			}
+		case "inputs":
+			m, ok := value.(map[string]interface{})
+			if !ok {
+				return fmt.Errorf("workflow provider validation failed: inputs must be a map, got %T", value)
+			}
+			for k, v := range m {
+				switch v.(type) {
+				case string, bool, int, int64, float64, nil:
+				default:
+					return fmt.Errorf("workflow provider validation failed: input '%s' must be a scalar, got %T", k, v)
+				}
+			}
 		default:
 			return fmt.Errorf("workflow provider validation failed: unknown parameter '%s'", key)
 		}
@@ -46,15 +59,25 @@ func (p *WorkflowProvider) Run(ctx context.Context, args map[string]interface{})
 		async = a
 	}
 
+	inputs := map[string]string{}
+	if m, ok := args["inputs"].(map[string]interface{}); ok {
+		for k, v := range m {
+			inputs[k] = fmt.Sprintf("%v", v)
+			if v == nil {
+				inputs[k] = ""
+			}
+		}
+	}
+
 	if async {
-		go WorkflowExecutor(context.Background(), workflowName) //nolint:errcheck
+		go WorkflowExecutor(context.Background(), workflowName, inputs) //nolint:errcheck
 		return &TaskResult{
 			Output:   fmt.Sprintf("workflow '%s' triggered asynchronously", workflowName),
 			Metadata: map[string]string{"workflow": workflowName, "async": "true"},
 		}, nil
 	}
 
-	results, err := WorkflowExecutor(ctx, workflowName)
+	results, err := WorkflowExecutor(ctx, workflowName, inputs)
 	if err != nil {
 		return nil, fmt.Errorf("workflow provider: child workflow '%s' failed: %w", workflowName, err)
 	}

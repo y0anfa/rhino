@@ -35,19 +35,17 @@ var runnerCmd = &cobra.Command{
 		}
 
 		for _, w := range workflows {
-			switch w.Trigger.Type {
-			case models.TriggerScheduled:
-				logger.Info("registering cron runner", zap.String("workflow", w.Name))
-				runnerManager.AddRunner(&runner.CronRunner{Workflow: w})
-			case models.TriggerWebhook:
-				logger.Info("registering webhook runner", zap.String("workflow", w.Name))
-				runnerManager.AddRunner(&runner.WebhookRunner{Workflow: w})
-			case models.TriggerWatch:
-				logger.Info("registering watch runner", zap.String("workflow", w.Name))
-				runnerManager.AddRunner(&runner.WatchRunner{Workflow: w})
-			default:
-				logger.Error("unknown trigger type", zap.String("workflow", w.Name), zap.String("trigger", string(w.Trigger.Type)))
+			r, err := runner.NewRunnerFor(w)
+			if err != nil {
+				logger.Error("skipping workflow", zap.String("workflow", w.Name), zap.Error(err))
+				continue
 			}
+			if r == nil {
+				logger.Info("manual workflow loaded, no runner needed", zap.String("workflow", w.Name))
+				continue
+			}
+			logger.Info("registering runner", zap.String("workflow", w.Name), zap.String("trigger", string(w.Trigger.Type)))
+			runnerManager.AddRunner(r)
 		}
 
 		ctx := context.Background()

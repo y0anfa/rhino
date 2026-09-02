@@ -6,9 +6,11 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
+	"github.com/y0anfa/rhino/internal/config"
 	"github.com/y0anfa/rhino/internal/models"
 )
 
@@ -89,4 +91,170 @@ func TestCronRunner_InvalidScheduleReturnsError(t *testing.T) {
 	if err == nil {
 		t.Fatal("expected an error for an invalid cron schedule")
 	}
+}
+
+func TestWebhookHandler_RejectsNonPost(t *testing.T) {
+	req := httptest.NewRequest(http.MethodGet, "/webhook/anything", nil)
+	rec := httptest.NewRecorder()
+	webhookHandler(rec, req)
+	if rec.Code != http.StatusMethodNotAllowed {
+		t.Fatalf("expected %d for GET, got %d", http.StatusMethodNotAllowed, rec.Code)
+	}
+	if rec.Header().Get("Allow") != http.MethodPost {
+		t.Errorf("expected Allow: POST header, got %q", rec.Header().Get("Allow"))
+	}
+}
+
+// fakeRunner records whether it was stopped, standing in for a runner that was
+// registered at startup.
+type fakeRunner struct {
+	name    string
+	stopped bool
+}
+
+func (f *fakeRunner) Run(context.Context) error  { return nil }
+func (f *fakeRunner) Stop(context.Context) error { f.stopped = true; return nil }
+func (f *fakeRunner) WorkflowName() string       { return f.name }
+
+// useWorkflowsDir points the global config at a temp workflows directory.
+func useWorkflowsDir(t *testing.T) string {
+	t.Helper()
+	dir := t.TempDir()
+	wfDir := filepath.Join(dir, "workflows")
+	if err := os.MkdirAll(wfDir, 0755); err != nil {
+		t.Fatal(err)
+	}
+	cfgPath := filepath.Join(dir, "config.yaml")
+	if err := os.WriteFile(cfgPath, []byte("workflows-dir: "+wfDir+"\nport: 8888\n"), 0644); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv(config.EnvConfigPath, cfgPath)
+	config.Reset()
+	t.Cleanup(config.Reset)
+	return wfDir
+}
+
+// A reload must stop the runner that was registered at startup; otherwise the
+// old cron schedule keeps firing next to the new one.
+func TestHotReloader_ReplacesStartupRunner(t *testing.T) {
+	wfDir := useWorkflowsDir(t)
+	path := filepath.Join(wfDir, "reloaded.yaml")
+	yaml := `name: reloaded
+settings:
+  max-tries: 1
+  timeout: 5s
+trigger:
+  name: t1
+  type: cron
+  schedule: "*/5 * * * *"
+tasks:
+  - name: noop
+    provider: shell
+    params:
+      command: "true"
+order:
+  - [noop]
+`
+	if err := os.WriteFile(path, []byte(yaml), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	manager := NewRunnerManager()
+	old := &fakeRunner{name: "reloaded"}
+	manager.AddRunner(old)
+
+	hr := NewHotReloader(wfDir, manager)
+	hr.ctx, hr.cancel = context.WithCancel(context.Background())
+	t.Cleanup(hr.cancel)
+
+	hr.handleChange(path)
+
+	if !old.stopped {
+		t.Fatal("the startup runner was left running after reload")
+	}
+	replacement := manager.RunnerFor("reloaded")
+	if replacement == nil || replacement == Runner(old) {
+		t.Fatalf("expected a fresh runner in the manager, got %#v", replacement)
+	}
+	t.Cleanup(func() { _ = replacement.Stop(context.Background()) })
+	if _, ok := replacement.(*CronRunner); !ok {
+		t.Errorf("expected a CronRunner, got %T", replacement)
+	}
+	if n := len(manager.Runners); n != 1 {
+		t.Errorf("expected exactly one runner registered, got %d", n)
+	}
+}
+
+// Deleting a workflow file must remove its runner without registering a new one.
+func TestHotReloader_RemovedWorkflowDropsRunner(t *testing.T) {
+	wfDir := useWorkflowsDir(t)
+
+	manager := NewRunnerManager()
+	old := &fakeRunner{name: "gone"}
+	manager.AddRunner(old)
+
+	hr := NewHotReloader(wfDir, manager)
+	hr.ctx, hr.cancel = context.WithCancel(context.Background())
+	t.Cleanup(hr.cancel)
+
+	hr.handleChange(filepath.Join(wfDir, "gone.yaml"))
+
+	if !old.stopped {
+		t.Fatal("runner for the deleted workflow was not stopped")
+	}
+	if manager.RunnerFor("gone") != nil {
+		t.Fatal("runner for the deleted workflow is still registered")
+	}
+}
+
+func TestWebhookHandler_PassesJSONBodyAsInputs(t *testing.T) {
+	target := filepath.Join(t.TempDir(), "inputs.txt")
+
+	w := models.NewWorkflow("wh-inputs", "webhook inputs")
+	w.SetTrigger(models.Trigger{Name: "t1", Type: models.TriggerWebhook})
+	w.Inputs = map[string]models.Input{"env": {Default: "staging"}, "version": {Required: true}}
+	w.AddTask(models.Task{
+		Name:     "write",
+		Provider: "file",
+		Params: map[string]interface{}{
+			"operation": "write",
+			"path":      target,
+			"content":   "{{input.env}}/{{input.version}}",
+		},
+	})
+	w.Order = [][]string{{"write"}}
+
+	webhookMutex.Lock()
+	webhookWorkflows[w.Name] = *w
+	webhookMutex.Unlock()
+	t.Cleanup(func() { UnregisterWebhookWorkflow(w.Name) })
+
+	// Missing required input is rejected before anything runs.
+	rec := httptest.NewRecorder()
+	webhookHandler(rec, httptest.NewRequest(http.MethodPost, "/webhook/wh-inputs", nil))
+	if rec.Code != http.StatusBadRequest {
+		t.Fatalf("expected 400 for a missing required input, got %d: %s", rec.Code, rec.Body.String())
+	}
+
+	// Body fields (plus undeclared extras from the external system) are accepted.
+	body := strings.NewReader(`{"version": "3.1", "ref": "refs/heads/main", "commits": [1, 2]}`)
+	req := httptest.NewRequest(http.MethodPost, "/webhook/wh-inputs?env=prod", body)
+	req.Header.Set("Content-Type", "application/json")
+	rec = httptest.NewRecorder()
+	webhookHandler(rec, req)
+	if rec.Code != http.StatusAccepted {
+		t.Fatalf("expected 202, got %d: %s", rec.Code, rec.Body.String())
+	}
+
+	deadline := time.Now().Add(3 * time.Second)
+	for time.Now().Before(deadline) {
+		if data, err := os.ReadFile(target); err == nil {
+			if string(data) != "prod/3.1" {
+				t.Fatalf("unexpected inputs in task: %q", data)
+			}
+			return
+		}
+		time.Sleep(20 * time.Millisecond)
+	}
+	t.Fatal("workflow did not run with webhook inputs")
 }

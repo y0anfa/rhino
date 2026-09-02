@@ -22,6 +22,9 @@ type Context struct {
 	WorkflowDesc   string
 	TriggerName    string
 	TriggerType    string
+	RunID          string
+	RunError       string
+	Inputs         map[string]string
 	TaskResults    map[string]*providers.TaskResult
 	SecretResolver SecretResolver
 
@@ -42,6 +45,24 @@ func (c *Context) SetTaskResult(taskName string, result *providers.TaskResult) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	c.TaskResults[taskName] = result
+}
+
+// SetRunError records the workflow failure so notifications can reference it
+// as {{workflow.error}}.
+func (c *Context) SetRunError(err error) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if err == nil {
+		c.RunError = ""
+		return
+	}
+	c.RunError = err.Error()
+}
+
+func (c *Context) runError() string {
+	c.mu.RLock()
+	defer c.mu.RUnlock()
+	return c.RunError
 }
 
 func (c *Context) taskResult(taskName string) (*providers.TaskResult, bool) {
@@ -70,15 +91,25 @@ func (c *Context) resolve(expr string) (string, bool) {
 	case strings.HasPrefix(expr, "task."):
 		return c.resolveTaskExpr(expr[5:])
 
+	case strings.HasPrefix(expr, "input."):
+		val, ok := c.Inputs[expr[6:]]
+		return val, ok
+
 	case expr == "workflow.name":
 		return c.WorkflowName, true
 	case expr == "workflow.description":
 		return c.WorkflowDesc, true
 
+	case expr == "workflow.error":
+		return c.runError(), true
+
 	case expr == "trigger.name":
 		return c.TriggerName, true
 	case expr == "trigger.type":
 		return c.TriggerType, true
+
+	case expr == "run.id":
+		return c.RunID, true
 
 	case expr == "timestamp":
 		return time.Now().UTC().Format(time.RFC3339), true

@@ -2,3 +2,5 @@
 
 .DS_Store
 config.yaml
+/rhino
+coverage.out

@@ -2,6 +2,7 @@ package store
 
 import (
 	"database/sql"
+	"encoding/json"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -83,8 +84,63 @@ func (s *SQLiteStore) migrate() error {
 
 	CREATE INDEX IF NOT EXISTS idx_tasks_run ON task_executions(run_id);
 	`
-	_, err := s.db.Exec(schema)
+	if _, err := s.db.Exec(schema); err != nil {
+		return err
+	}
+	return s.addColumnIfMissing("workflow_runs", "inputs", "TEXT NOT NULL DEFAULT ''")
+}
+
+// addColumnIfMissing applies an additive migration to a table created by an
+// older version of the schema.
+func (s *SQLiteStore) addColumnIfMissing(table, column, definition string) error {
+	rows, err := s.db.Query(fmt.Sprintf("PRAGMA table_info(%s)", table))
+	if err != nil {
+		return err
+	}
+	defer rows.Close()
+	for rows.Next() {
+		var (
+			cid        int
+			name, typ  string
+			notNull    int
+			defaultVal sql.NullString
+			pk         int
+		)
+		if err := rows.Scan(&cid, &name, &typ, &notNull, &defaultVal, &pk); err != nil {
+			return err
+		}
+		if name == column {
+			return nil
+		}
+	}
+	if err := rows.Err(); err != nil {
+		return err
+	}
+	_, err = s.db.Exec(fmt.Sprintf("ALTER TABLE %s ADD COLUMN %s %s", table, column, definition))
 	return err
+}
+
+// encodeInputs stores run inputs as JSON; an empty map stays an empty string.
+func encodeInputs(inputs map[string]string) string {
+	if len(inputs) == 0 {
+		return ""
+	}
+	b, err := json.Marshal(inputs)
+	if err != nil {
+		return ""
+	}
+	return string(b)
+}
+
+func decodeInputs(raw string) map[string]string {
+	if raw == "" {
+		return nil
+	}
+	var inputs map[string]string
+	if err := json.Unmarshal([]byte(raw), &inputs); err != nil {
+		return nil
+	}
+	return inputs
 }
 
 // nullTime stores an unset completion time as NULL rather than year 1.
@@ -97,10 +153,10 @@ func nullTime(t time.Time) interface{} {
 
 func (s *SQLiteStore) SaveRun(run *WorkflowRun) error {
 	_, err := s.db.Exec(
-		`INSERT INTO workflow_runs (id, workflow_name, workflow_hash, workflow_yaml, status, trigger_type, started_at, completed_at, error)
-		 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		`INSERT INTO workflow_runs (id, workflow_name, workflow_hash, workflow_yaml, status, trigger_type, inputs, started_at, completed_at, error)
+		 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
 		run.ID, run.WorkflowName, run.WorkflowHash, run.WorkflowYAML,
-		run.Status, run.TriggerType, run.StartedAt, nullTime(run.CompletedAt), run.Error,
+		run.Status, run.TriggerType, encodeInputs(run.Inputs), run.StartedAt, nullTime(run.CompletedAt), run.Error,
 	)
 	return err
 }
@@ -115,14 +171,16 @@ func (s *SQLiteStore) UpdateRun(run *WorkflowRun) error {
 
 func (s *SQLiteStore) GetRun(id string) (*WorkflowRun, error) {
 	row := s.db.QueryRow(
-		`SELECT id, workflow_name, workflow_hash, workflow_yaml, status, trigger_type, started_at, completed_at, error
+		`SELECT id, workflow_name, workflow_hash, workflow_yaml, status, trigger_type, inputs, started_at, completed_at, error
 		 FROM workflow_runs WHERE id = ?`, id,
 	)
 
 	var run WorkflowRun
 	var completedAt sql.NullTime
+	var inputs string
 	err := row.Scan(&run.ID, &run.WorkflowName, &run.WorkflowHash, &run.WorkflowYAML,
-		&run.Status, &run.TriggerType, &run.StartedAt, &completedAt, &run.Error)
+		&run.Status, &run.TriggerType, &inputs, &run.StartedAt, &completedAt, &run.Error)
+	run.Inputs = decodeInputs(inputs)
 	if err == sql.ErrNoRows {
 		return nil, fmt.Errorf("run '%s' not found", id)
 	}
@@ -136,7 +194,7 @@ func (s *SQLiteStore) GetRun(id string) (*WorkflowRun, error) {
 }
 
 func (s *SQLiteStore) ListRuns(filter RunFilter) ([]*WorkflowRun, error) {
-	query := `SELECT id, workflow_name, workflow_hash, status, trigger_type, started_at, completed_at, error
+	query := `SELECT id, workflow_name, workflow_hash, status, trigger_type, inputs, started_at, completed_at, error
 	          FROM workflow_runs WHERE 1=1`
 	var args []interface{}
 
@@ -172,10 +230,12 @@ func (s *SQLiteStore) ListRuns(filter RunFilter) ([]*WorkflowRun, error) {
 	for rows.Next() {
 		var run WorkflowRun
 		var completedAt sql.NullTime
+		var inputs string
 		if err := rows.Scan(&run.ID, &run.WorkflowName, &run.WorkflowHash, &run.Status,
-			&run.TriggerType, &run.StartedAt, &completedAt, &run.Error); err != nil {
+			&run.TriggerType, &inputs, &run.StartedAt, &completedAt, &run.Error); err != nil {
 			return nil, err
 		}
+		run.Inputs = decodeInputs(inputs)
 		if completedAt.Valid {
 			run.CompletedAt = completedAt.Time
 		}

@@ -3,8 +3,11 @@ package web
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
+	"io"
 	"net/http"
+	"os"
 	"strings"
 	"time"
 
@@ -20,22 +23,27 @@ type Server struct {
 }
 
 func NewServer(port int) *Server {
-	mux := http.NewServeMux()
 	s := &Server{
 		httpServer: &http.Server{
-			Addr:    fmt.Sprintf(":%d", port),
-			Handler: mux,
+			Addr: fmt.Sprintf(":%d", port),
 		},
 		startTime: time.Now(),
 	}
+	s.httpServer.Handler = s.Handler()
+	return s
+}
 
+// Handler returns the dashboard's HTTP routes, so they can be served (and
+// tested) without binding a port.
+func (s *Server) Handler() http.Handler {
+	mux := http.NewServeMux()
 	mux.HandleFunc("/api/workflows", s.handleWorkflows)
+	mux.HandleFunc("/api/workflows/", s.handleWorkflowDetail)
 	mux.HandleFunc("/api/runs", s.handleRuns)
 	mux.HandleFunc("/api/runs/", s.handleRunDetail)
 	mux.HandleFunc("/api/health", s.handleHealth)
 	mux.HandleFunc("/", s.handleDashboard)
-
-	return s
+	return mux
 }
 
 func (s *Server) Start() error {
@@ -61,6 +69,175 @@ func (s *Server) handleWorkflows(w http.ResponseWriter, r *http.Request) {
 	jsonResponse(w, workflows)
 }
 
+// workflowSummary is the API view of a workflow definition.
+type workflowSummary struct {
+	Name        string                  `json:"name"`
+	Description string                  `json:"description"`
+	Trigger     models.Trigger          `json:"trigger"`
+	Settings    models.Settings         `json:"settings"`
+	Inputs      map[string]models.Input `json:"inputs,omitempty"`
+	Tasks       []taskSummary           `json:"tasks"`
+	Order       [][]string              `json:"order"`
+}
+
+type taskSummary struct {
+	Name            string   `json:"name"`
+	Description     string   `json:"description,omitempty"`
+	Provider        string   `json:"provider"`
+	Condition       string   `json:"condition,omitempty"`
+	ContinueOnError bool     `json:"continue_on_error,omitempty"`
+	DependsOn       []string `json:"depends_on,omitempty"`
+}
+
+// handleWorkflowDetail serves GET /api/workflows/{name} and
+// POST /api/workflows/{name}/run.
+func (s *Server) handleWorkflowDetail(w http.ResponseWriter, r *http.Request) {
+	rest := strings.TrimPrefix(r.URL.Path, "/api/workflows/")
+	parts := strings.Split(strings.Trim(rest, "/"), "/")
+	if len(parts) == 0 || parts[0] == "" {
+		jsonError(w, "workflow name required", http.StatusBadRequest)
+		return
+	}
+	name := parts[0]
+
+	wf, err := models.LoadWorkflow(name)
+	if err != nil {
+		if errors.Is(err, os.ErrNotExist) {
+			jsonError(w, fmt.Sprintf("workflow '%s' not found", name), http.StatusNotFound)
+			return
+		}
+		jsonError(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+
+	switch {
+	case len(parts) == 1 && r.Method == http.MethodGet:
+		if err := wf.Validate(); err != nil {
+			jsonError(w, err.Error(), http.StatusUnprocessableEntity)
+			return
+		}
+		jsonResponse(w, summarize(wf))
+	case len(parts) == 2 && parts[1] == "run":
+		if r.Method != http.MethodPost {
+			w.Header().Set("Allow", http.MethodPost)
+			jsonError(w, "method not allowed", http.StatusMethodNotAllowed)
+			return
+		}
+		s.triggerRun(w, r, wf)
+	default:
+		jsonError(w, "not found", http.StatusNotFound)
+	}
+}
+
+func summarize(wf models.Workflow) workflowSummary {
+	out := workflowSummary{
+		Name:        wf.Name,
+		Description: wf.Description,
+		Trigger:     wf.Trigger,
+		Settings:    wf.Settings,
+		Inputs:      wf.Inputs,
+		Order:       wf.Order,
+		Tasks:       make([]taskSummary, 0, len(wf.Tasks)),
+	}
+	for _, t := range wf.Tasks {
+		out.Tasks = append(out.Tasks, taskSummary{
+			Name:            t.Name,
+			Description:     t.Description,
+			Provider:        t.Provider,
+			Condition:       t.Condition,
+			ContinueOnError: t.ContinueOnError,
+			DependsOn:       t.DependsOn,
+		})
+	}
+	return out
+}
+
+// triggerRun starts a workflow run. By default it returns 202 with the run ID
+// immediately; with ?wait=true it blocks and reports the outcome.
+func (s *Server) triggerRun(w http.ResponseWriter, r *http.Request, wf models.Workflow) {
+	if err := wf.Validate(); err != nil {
+		jsonError(w, err.Error(), http.StatusUnprocessableEntity)
+		return
+	}
+
+	inputs, err := requestInputs(r)
+	if err != nil {
+		jsonError(w, err.Error(), http.StatusBadRequest)
+		return
+	}
+	if err := wf.CheckInputs(inputs, true); err != nil {
+		jsonError(w, err.Error(), http.StatusBadRequest)
+		return
+	}
+
+	runID := store.NewID()
+	wait := r.URL.Query().Get("wait") == "true"
+
+	if wait {
+		ctx := models.WithInputs(models.WithRunID(r.Context(), runID), inputs)
+		_, err := wf.Run(ctx)
+		if errors.Is(err, models.ErrTooManyRuns) {
+			jsonError(w, err.Error(), http.StatusTooManyRequests)
+			return
+		}
+		resp := map[string]interface{}{"workflow": wf.Name, "run_id": runID, "status": store.RunStatusSuccess}
+		if err != nil {
+			resp["status"] = store.RunStatusFailed
+			resp["error"] = err.Error()
+		}
+		jsonResponse(w, resp)
+		return
+	}
+
+	ctx := models.WithInputs(models.WithRunID(context.WithoutCancel(r.Context()), runID), inputs)
+	go func() {
+		if _, err := wf.Run(ctx); err != nil {
+			logger.Error("workflow execution failed", zap.String("workflow", wf.Name), zap.Error(err))
+		}
+	}()
+
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(http.StatusAccepted)
+	json.NewEncoder(w).Encode(map[string]interface{}{
+		"workflow": wf.Name,
+		"run_id":   runID,
+		"status":   "triggered",
+	})
+}
+
+// maxRunBody bounds the JSON inputs accepted on a run request.
+const maxRunBody = 1 << 20
+
+// requestInputs reads inputs from query parameters (except the API's own
+// "wait") and from a JSON object body; body fields win.
+func requestInputs(r *http.Request) (map[string]string, error) {
+	inputs := make(map[string]string)
+	for key, values := range r.URL.Query() {
+		if key == "wait" || len(values) == 0 {
+			continue
+		}
+		inputs[key] = values[0]
+	}
+	if r.Body == nil {
+		return inputs, nil
+	}
+	body, err := io.ReadAll(io.LimitReader(r.Body, maxRunBody+1))
+	if err != nil {
+		return nil, fmt.Errorf("failed to read request body: %w", err)
+	}
+	if len(body) > maxRunBody {
+		return nil, fmt.Errorf("request body exceeds %d bytes", maxRunBody)
+	}
+	fromBody, err := models.InputsFromJSON(body)
+	if err != nil {
+		return nil, err
+	}
+	for k, v := range fromBody {
+		inputs[k] = v
+	}
+	return inputs, nil
+}
+
 func (s *Server) handleRuns(w http.ResponseWriter, r *http.Request) {
 	st := store.Global()
 	if st == nil {
@@ -75,11 +252,29 @@ func (s *Server) handleRuns(w http.ResponseWriter, r *http.Request) {
 	if status := r.URL.Query().Get("status"); status != "" {
 		filter.Status = store.RunStatus(status)
 	}
+	if since := r.URL.Query().Get("since"); since != "" {
+		d, err := time.ParseDuration(since)
+		if err != nil {
+			jsonError(w, fmt.Sprintf("invalid since duration '%s': %v", since, err), http.StatusBadRequest)
+			return
+		}
+		filter.Since = d
+	}
+	if limit := r.URL.Query().Get("limit"); limit != "" {
+		n, err := fmt.Sscanf(limit, "%d", &filter.Limit)
+		if err != nil || n != 1 || filter.Limit <= 0 {
+			jsonError(w, fmt.Sprintf("invalid limit '%s'", limit), http.StatusBadRequest)
+			return
+		}
+	}
 
 	runs, err := st.ListRuns(filter)
 	if err != nil {
 		jsonError(w, err.Error(), http.StatusInternalServerError)
 		return
+	}
+	if runs == nil {
+		runs = []*store.WorkflowRun{}
 	}
 	jsonResponse(w, runs)
 }
@@ -105,7 +300,14 @@ func (s *Server) handleRunDetail(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	tasks, _ := st.GetTaskExecutions(runID)
+	tasks, err := st.GetTaskExecutions(runID)
+	if err != nil {
+		jsonError(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+	if tasks == nil {
+		tasks = []*store.TaskExecution{}
+	}
 
 	jsonResponse(w, map[string]interface{}{
 		"run":   run,
@@ -114,9 +316,13 @@ func (s *Server) handleRunDetail(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) handleHealth(w http.ResponseWriter, r *http.Request) {
-	workflows, _ := models.ListWorkflows()
+	workflows, err := models.ListWorkflows()
+	status := "healthy"
+	if err != nil {
+		status = "degraded"
+	}
 	jsonResponse(w, map[string]interface{}{
-		"status":    "healthy",
+		"status":    status,
 		"uptime":    time.Since(s.startTime).String(),
 		"workflows": len(workflows),
 	})

@@ -82,9 +82,7 @@ func (wr *WatchRunner) Run(ctx context.Context) error {
 				}
 				timer = time.AfterFunc(debounce, func() {
 					if _, err := wr.Workflow.Run(wr.ctx); err != nil {
-						logger.Error("workflow execution failed",
-							zap.String("workflow", wr.Workflow.Name),
-							zap.Error(err))
+						logRunError(wr.Workflow.Name, err)
 					}
 				})
 
@@ -105,6 +103,8 @@ func (wr *WatchRunner) Run(ctx context.Context) error {
 		zap.String("pattern", pattern))
 	return nil
 }
+
+func (wr *WatchRunner) WorkflowName() string { return wr.Workflow.Name }
 
 func (wr *WatchRunner) Stop(_ context.Context) error {
 	logger.Info("stopping file watch runner", zap.String("workflow", wr.Workflow.Name))
